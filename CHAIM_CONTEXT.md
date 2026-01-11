@@ -11,8 +11,13 @@ This package is a hybrid Node and Java code generator that converts bprint schem
 
 ## What this repo does
 
-chaim-client-java generates Java source code from bprint schemas and optional datastore metadata.  
-It is invoked by chaim-cli via a TypeScript wrapper that spawns a Java fat JAR.
+chaim-client-java generates Java source code from schema JSON and optional datastore metadata.  
+It does **not** read `.bprint` files or OS cache snapshots directly — it receives parsed schema JSON from `chaim-cli`, which extracts it from OS cache snapshots.
+
+**Data flow**:
+```
+.bprint file → chaim-cdk → OS cache snapshot → chaim-cli → chaim-client-java → .java files
+```
 
 **Primary outputs**:
 - Entity DTO classes
@@ -43,10 +48,10 @@ flowchart LR
 ## Inputs and outputs
 
 **Inputs**:
-- schema JSON (derived from a .bprint file)
+- schema JSON (extracted from OS cache snapshot by chaim-cli)
 - Java package name
 - output directory
-- optional table metadata JSON
+- optional table metadata JSON (extracted from OS cache snapshot by chaim-cli)
 
 **Outputs**:
 - .java files written to the output directory under the provided package namespace
