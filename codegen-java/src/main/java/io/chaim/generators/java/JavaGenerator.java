@@ -30,7 +30,7 @@ public class JavaGenerator {
 
         // Generate ChaimConfig if we have table metadata
         if (tableMetadata != null) {
-            TypeSpec configType = generateChaimConfig(tableMetadata);
+            TypeSpec configType = generateChaimConfig(tableMetadata, pkg);
             JavaFile.builder(pkg + ".config", configType)
                 .skipJavaLangImports(true)
                 .build()
@@ -118,7 +118,7 @@ public class JavaGenerator {
         return tb.build();
     }
 
-    private TypeSpec generateChaimConfig(TableMetadata tableMetadata) {
+    private TypeSpec generateChaimConfig(TableMetadata tableMetadata, String pkg) {
         TypeSpec.Builder tb = TypeSpec.classBuilder("ChaimConfig")
             .addModifiers(Modifier.PUBLIC);
 
@@ -138,11 +138,11 @@ public class JavaGenerator {
             .build();
         tb.addField(region);
 
-        // createMapper() method
+        // createMapper() method - note: returns mapper from same package hierarchy
         MethodSpec createMapper = MethodSpec.methodBuilder("createMapper")
             .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
-            .returns(ClassName.get("io.chaim.mapper", "ChaimMapperClient"))
-            .addStatement("return new $T()", ClassName.get("io.chaim.mapper", "ChaimMapperClient"))
+            .returns(ClassName.get(pkg + ".mapper", "ChaimMapperClient"))
+            .addStatement("return new $T()", ClassName.get(pkg + ".mapper", "ChaimMapperClient"))
             .build();
         tb.addMethod(createMapper);
 
@@ -236,7 +236,7 @@ public class JavaGenerator {
         return switch (type) {
             case "string" -> ClassName.get(String.class);
             case "number" -> ClassName.get(Double.class);
-            case "bool" -> ClassName.get(Boolean.class);
+            case "boolean", "bool" -> ClassName.get(Boolean.class);
             case "timestamp" -> ClassName.get(java.time.Instant.class);
             default -> ClassName.get(Object.class);
         };

@@ -63,7 +63,9 @@ public class Main {
             JavaGenerator generator = new JavaGenerator();
             generator.generate(schema, packageName, Paths.get(outputDir), tableMetadata);
             
-            System.out.println("Generated Java code for " + schema.entity.name + " in " + outputDir);
+            // Derive entity name for output message
+            String entityName = deriveEntityName(schema);
+            System.out.println("Generated Java code for " + entityName + " in " + outputDir);
             
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());
@@ -81,5 +83,25 @@ public class Main {
         
         // TableMetadata constructor requires schemaData as JsonNode, we can pass null or the node itself
         return new TableMetadata(tableName, tableArn, region, node);
+    }
+    
+    /**
+     * Derive entity name from schema.
+     * Priority: entity.name > last part of namespace (capitalized) > "Entity"
+     */
+    private static String deriveEntityName(BprintSchema schema) {
+        // First try entity.name
+        if (schema.entity != null && schema.entity.name != null && !schema.entity.name.isEmpty()) {
+            return schema.entity.name;
+        }
+        
+        // Then try deriving from namespace (e.g., "example.users" -> "Users")
+        if (schema.namespace != null && !schema.namespace.isEmpty()) {
+            String[] parts = schema.namespace.split("\\.");
+            String lastPart = parts[parts.length - 1];
+            return lastPart.substring(0, 1).toUpperCase() + lastPart.substring(1);
+        }
+        
+        return "Entity";
     }
 }
