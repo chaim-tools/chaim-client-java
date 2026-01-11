@@ -4,13 +4,23 @@ import io.chaim.core.model.BprintSchema;
 import io.chaim.cdk.TableMetadata;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * CLI entry point for the Java code generator.
  * 
- * Usage: java -jar codegen-java.jar --schema <json> --package <pkg> --output <dir> [--table-metadata <json>]
+ * Usage (single schema - legacy):
+ *   java -jar codegen-java.jar --schema <json> --package <pkg> --output <dir> [--table-metadata <json>]
+ * 
+ * Usage (multiple schemas - single-table design):
+ *   java -jar codegen-java.jar --schemas <json-array> --package <pkg> --output <dir> [--table-metadata <json>]
+ *   java -jar codegen-java.jar --schemas-file <path> --package <pkg> --output <dir> [--table-metadata <json>]
  */
 public class Main {
     
@@ -18,7 +28,9 @@ public class Main {
     
     public static void main(String[] args) {
         try {
-            String schemaJson = null;
+            String schemaJson = null;      // Single schema (legacy)
+            String schemasJson = null;     // Multiple schemas (JSON array)
+            String schemasFile = null;     // Path to file containing schemas JSON
             String packageName = null;
             String outputDir = null;
             String tableMetadataJson = null;
@@ -28,6 +40,12 @@ public class Main {
                 switch (args[i]) {
                     case "--schema":
                         schemaJson = args[++i];
+                        break;
+                    case "--schemas":
+                        schemasJson = args[++i];
+                        break;
+                    case "--schemas-file":
+                        schemasFile = args[++i];
                         break;
                     case "--package":
                         packageName = args[++i];
@@ -45,13 +63,32 @@ public class Main {
             }
             
             // Validate required args
-            if (schemaJson == null || packageName == null || outputDir == null) {
-                System.err.println("Usage: java -jar codegen-java.jar --schema <json> --package <pkg> --output <dir> [--table-metadata <json>]");
+            boolean hasSchemaInput = schemaJson != null || schemasJson != null || schemasFile != null;
+            if (!hasSchemaInput || packageName == null || outputDir == null) {
+                System.err.println("Usage: java -jar codegen-java.jar [--schema <json> | --schemas <json-array> | --schemas-file <path>] --package <pkg> --output <dir> [--table-metadata <json>]");
                 System.exit(1);
             }
             
-            // Parse schema from JSON string
-            BprintSchema schema = MAPPER.readValue(schemaJson, BprintSchema.class);
+            // Parse schemas
+            List<BprintSchema> schemas = new ArrayList<>();
+            
+            if (schemasFile != null) {
+                // Read schemas from file
+                String fileContent = Files.readString(Path.of(schemasFile));
+                schemas = MAPPER.readValue(fileContent, new TypeReference<List<BprintSchema>>() {});
+            } else if (schemasJson != null) {
+                // Parse schemas from JSON array string
+                schemas = MAPPER.readValue(schemasJson, new TypeReference<List<BprintSchema>>() {});
+            } else if (schemaJson != null) {
+                // Legacy single schema mode
+                BprintSchema schema = MAPPER.readValue(schemaJson, BprintSchema.class);
+                schemas.add(schema);
+            }
+            
+            if (schemas.isEmpty()) {
+                System.err.println("Error: No schemas provided");
+                System.exit(1);
+            }
             
             // Parse table metadata if provided
             TableMetadata tableMetadata = null;
@@ -61,11 +98,14 @@ public class Main {
             
             // Generate code
             JavaGenerator generator = new JavaGenerator();
-            generator.generate(schema, packageName, Paths.get(outputDir), tableMetadata);
+            generator.generateForTable(schemas, packageName, Paths.get(outputDir), tableMetadata);
             
-            // Derive entity name for output message
-            String entityName = deriveEntityName(schema);
-            System.out.println("Generated Java code for " + entityName + " in " + outputDir);
+            // Output summary
+            System.out.println("Generated Java code for " + schemas.size() + " entity/entities in " + outputDir);
+            for (BprintSchema schema : schemas) {
+                String entityName = deriveEntityName(schema);
+                System.out.println("  - " + entityName);
+            }
             
         } catch (Exception e) {
             System.err.println("Error: " + e.getMessage());

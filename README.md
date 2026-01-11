@@ -1,15 +1,16 @@
 # chaim-client-java
 
-A comprehensive Java SDK for the Chaim framework that provides code generation, schema validation, and AWS DynamoDB integration. This package generates Java DTOs, configuration classes, and DynamoDB mapper clients from schema JSON extracted from OS cache snapshots.
+A production-ready Java SDK generator for the Chaim framework. Generates type-safe DynamoDB Enhanced Client code with single-table design support, Lombok annotations, and DI-friendly architecture.
 
 ## Overview
 
 The chaim-client-java is a **hybrid Java/TypeScript package** that serves as the code generation engine for the Chaim ecosystem. It is an **internal dependency** of `chaim-cli` — end users should not invoke it directly.
 
-- **Schema Parsing**: Parse and validate schema JSON (received from chaim-cli)
-- **Code Generation**: Generate Java DTOs, ChaimConfig, and ChaimMapperClient classes
-- **TypeScript Wrapper**: Node.js interface for integration with chaim-cli
-- **npm Distribution**: Bundled JAR for seamless npm installation
+- **DynamoDB Enhanced Client**: Full `@DynamoDbBean` annotation support
+- **Single-Table Design**: Multiple entities per table with key prefixes
+- **Lombok Integration**: `@Data`, `@Builder`, `@NoArgsConstructor`, `@AllArgsConstructor`
+- **DI-Friendly**: Builder pattern, endpoint override, client injection for testing
+- **No Scan by Default**: Promotes NoSQL best practices
 
 **Invocation Model**:
 ```
@@ -48,7 +49,7 @@ npm run build
 
 ## Requirements
 
-- **Java**: 22 (runtime — JAR is compiled with `--release 22`)
+- **Java**: 17 LTS (runtime — JAR targets Java 17 for enterprise compatibility)
 - **Node.js**: 18+ (for TypeScript wrapper)
 - **Gradle**: 8+ (for building from source)
 
@@ -80,8 +81,8 @@ chaim generate --package com.example.model --language java
 
 The CLI:
 1. Reads snapshots from OS cache (`~/.chaim/cache/snapshots/`)
-2. Extracts schema and metadata
-3. Invokes chaim-client-java internally
+2. Groups snapshots by physical table (using `tableArn` or composite key)
+3. Invokes chaim-client-java with all schemas for each table
 4. Writes generated `.java` files to the output directory
 
 ---
@@ -96,11 +97,21 @@ The following methods are for package maintainers and local testing only.
 import { JavaGenerator } from '@chaim-tools/client-java';
 
 const generator = new JavaGenerator();
+
+// Single-table design: multiple schemas for one table
+await generator.generateForTable(
+  [userSchema, orderSchema],  // Array of schema objects
+  'com.example.model',        // Java package name
+  './src/main/java',          // Output directory
+  tableMetadata               // { tableName, tableArn, region }
+);
+
+// Legacy single-schema API (still supported)
 await generator.generate(
-  schema,           // Schema JSON object
-  'com.example.model',  // Java package name
-  './src/main/java',    // Output directory
-  tableMetadata     // Optional table metadata
+  schema,
+  'com.example.model',
+  './src/main/java',
+  tableMetadata
 );
 ```
 
@@ -109,43 +120,149 @@ await generator.generate(
 ```java
 import io.chaim.generators.java.JavaGenerator;
 import io.chaim.core.model.BprintSchema;
+import io.chaim.cdk.TableMetadata;
 import java.nio.file.Path;
+import java.util.List;
 
 JavaGenerator generator = new JavaGenerator();
-generator.generate(schema, "com.example.model", Path.of("src/main/java"), tableMetadata);
+
+// Multiple schemas for single-table design
+generator.generateForTable(
+    List.of(userSchema, orderSchema),
+    "com.example.model",
+    Path.of("src/main/java"),
+    tableMetadata
+);
 ```
 
 #### As CLI (Testing)
 
 ```bash
+# Multiple schemas (single-table design)
+java -jar codegen-java.jar \
+  --schemas '[{"schemaVersion":"v1",...},{"schemaVersion":"v1",...}]' \
+  --package com.example.model \
+  --output ./src/main/java \
+  --table-metadata '{"tableName":"DataTable","tableArn":"arn:..."}'
+
+# File-based for large payloads
+java -jar codegen-java.jar \
+  --schemas-file /tmp/schemas.json \
+  --package com.example.model \
+  --output ./src/main/java \
+  --table-metadata '{"tableName":"DataTable",...}'
+
+# Legacy single schema (backwards compatible)
 java -jar codegen-java.jar \
   --schema '{"schemaVersion":"v1",...}' \
   --package com.example.model \
-  --output ./src/main/java \
-  --table-metadata '{"tableName":"MyTable",...}'
+  --output ./src/main/java
 ```
 
 ## Generated Output
 
+For a package `com.example.model` with User and Order schemas:
+
 ```
 com/example/model/
-├── Users.java                 # Entity DTO
-│   ├── private fields         # With getters/setters
-│   ├── chaimVersion           # Schema version constant
-│   └── validate()             # Required field validation
-│
-├── config/
-│   └── ChaimConfig.java       # Table configuration
-│       ├── TABLE_NAME
-│       ├── TABLE_ARN
-│       ├── REGION
-│       └── createMapper()
-│
-└── mapper/
-    └── ChaimMapperClient.java # DynamoDB mapper stubs
-        ├── save(entity)
-        ├── findById(class, id)
-        └── findByField(class, field, value)
+├── User.java                      # Entity DTO with pk/sk fields
+├── Order.java                     # Entity DTO with pk/sk fields
+├── keys/
+│   ├── UserKeys.java              # Key composition helpers
+│   └── OrderKeys.java             # Key composition helpers
+├── repository/
+│   ├── UserRepository.java        # PK/SK-based CRUD operations
+│   └── OrderRepository.java       # PK/SK-based CRUD operations
+├── client/
+│   └── ChaimDynamoDbClient.java   # DI-friendly client wrapper
+└── config/
+    └── ChaimConfig.java           # Constants + repository factories
+```
+
+### Entity DTO
+
+```java
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@DynamoDbBean
+public class User {
+    private String pk;      // "USER#{userId}"
+    private String sk;      // "USER"
+    private String userId;
+    private String email;
+
+    @DynamoDbPartitionKey
+    public String getPk() { return pk; }
+
+    @DynamoDbSortKey
+    public String getSk() { return sk; }
+}
+```
+
+### Key Helpers
+
+```java
+public final class UserKeys {
+    public static final String ENTITY_PREFIX = "USER#";
+
+    public static String pk(String userId) {
+        return ENTITY_PREFIX + userId;  // "USER#user-123"
+    }
+
+    public static Key key(String userId) {
+        return Key.builder()
+            .partitionValue(pk(userId))
+            .sortValue(sk())
+            .build();
+    }
+}
+```
+
+### Repository
+
+```java
+public class UserRepository {
+    // DI-friendly constructors
+    public UserRepository(ChaimDynamoDbClient client) { ... }
+    public UserRepository(DynamoDbEnhancedClient client, String tableName) { ... }
+
+    public void save(User entity) { ... }
+    public Optional<User> findByPkSk(String pk, String sk) { ... }
+    public Optional<User> findByUserId(String userId) { ... }  // Convenience
+    public void deleteByPkSk(String pk, String sk) { ... }
+    public void deleteByUserId(String userId) { ... }
+    // NOTE: No findAll() or scan() - promotes NoSQL best practices
+}
+```
+
+### DI-Friendly Client
+
+```java
+// Builder pattern for configuration
+ChaimDynamoDbClient client = ChaimDynamoDbClient.builder()
+    .tableName("DataTable")
+    .region("us-east-1")
+    .endpoint("http://localhost:8000")  // For local DynamoDB
+    .build();
+
+// Or inject existing client for testing
+ChaimDynamoDbClient client = ChaimDynamoDbClient.wrap(mockEnhancedClient, "DataTable");
+```
+
+### Configuration
+
+```java
+// Use shared client (lazy singleton)
+UserRepository users = ChaimConfig.userRepository();
+OrderRepository orders = ChaimConfig.orderRepository();
+
+// Or with custom client
+ChaimDynamoDbClient customClient = ChaimConfig.clientBuilder()
+    .endpoint("http://localhost:8000")
+    .build();
+UserRepository users = ChaimConfig.userRepository(customClient);
 ```
 
 ## Type Mappings
@@ -217,8 +334,8 @@ AWS integration:
 ### codegen-java
 
 Code generation:
-- `Main` - CLI entry point
-- `JavaGenerator` - JavaPoet-based code generator
+- `Main` - CLI entry point (supports `--schemas`, `--schemas-file`, `--schema`)
+- `JavaGenerator` - JavaPoet-based code generator with single-table design support
 
 ## npm Packaging
 

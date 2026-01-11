@@ -1,7 +1,7 @@
 # AI Agent Context: chaim-client-java
 
 **Purpose**: Structured context for AI agents to understand and modify the chaim-client-java repository.  
-This package is a hybrid Node and Java code generator that converts bprint schemas into Java source code.
+This package is a hybrid Node and Java code generator that converts bprint schemas into production-ready Java source code with DynamoDB Enhanced Client integration.
 
 **Package**: `@chaim-tools/client-java`  
 **Version**: 0.1.0  
@@ -11,7 +11,7 @@ This package is a hybrid Node and Java code generator that converts bprint schem
 
 ## What this repo does
 
-chaim-client-java generates Java source code from schema JSON and optional datastore metadata.  
+chaim-client-java generates **production-ready Java source code** from schema JSON and datastore metadata.  
 It is an **internal dependency** of `chaim-cli` — end users should not invoke it directly.
 
 **Invocation model**:
@@ -29,27 +29,48 @@ It is an **internal dependency** of `chaim-cli` — end users should not invoke 
 > **Note**: This package does not read `.bprint` files or OS cache snapshots directly. It receives parsed schema JSON from `chaim-cli`.
 
 **Primary outputs**:
-- Entity DTO classes
-- ChaimConfig configuration class
-- ChaimMapperClient DynamoDB mapper client
+- Entity DTOs with DynamoDB Enhanced Client annotations (`@DynamoDbBean`, `@DynamoDbPartitionKey`, `@DynamoDbSortKey`)
+- Key composition helpers (`{Entity}Keys.java`)
+- Repository classes with PK/SK-based CRUD operations
+- DI-friendly DynamoDB client wrapper (`ChaimDynamoDbClient.java`)
+- Configuration with repository factory methods (`ChaimConfig.java`)
 
 ---
 
 ## How it works
 
 **Runtime flow**:
-1. chaim-cli calls `JavaGenerator` from this npm package
-2. The TypeScript wrapper resolves a JAR path and spawns `java -jar` with schema and metadata payloads as JSON strings
-3. The Java generator parses JSON and writes Java files to the output directory
+1. chaim-cli groups snapshots by physical table (using `tableArn` or composite key)
+2. chaim-cli calls `JavaGenerator.generateForTable()` with all schemas for a table
+3. The TypeScript wrapper spawns `java -jar` with schemas and metadata as JSON
+4. The Java generator parses JSON and writes Java files to the output directory
 
 ```mermaid
 flowchart LR
-    CLI["chaim-cli (Node.js)<br/>creates JavaGenerator<br/>calls generate()"]
+    CLI["chaim-cli (Node.js)<br/>groups by table<br/>calls generateForTable()"]
     TS["TypeScript wrapper<br/>resolves JAR path<br/>spawns java process"]
     JAR["Java generator JAR<br/>parses schema JSON<br/>generates .java files"]
-    OUT["Generated .java files"]
+    OUT["Generated .java files<br/>per entity + shared infra"]
 
     CLI --> TS --> JAR --> OUT
+```
+
+---
+
+## Single-Table Design Support
+
+The generator natively supports DynamoDB single-table design:
+
+1. **Multiple entities per table**: Multiple `.bprint` schemas can bind to the same DynamoDB table
+2. **Entity-prefixed keys**: Generated `pk`/`sk` fields use entity prefixes (e.g., `USER#`, `ORDER#`)
+3. **Shared infrastructure once**: `ChaimDynamoDbClient` and `ChaimConfig` are generated once per table
+4. **Per-entity artifacts**: Entity DTOs, Keys helpers, and Repositories are generated for each schema
+
+```
+Table: DataTable
+├── User (pk: "USER#{userId}", sk: "USER")
+├── Order (pk: "ORDER#{orderId}", sk: "ORDER")
+└── Product (pk: "PRODUCT#{productId}", sk: "PRODUCT")
 ```
 
 ---
@@ -57,19 +78,37 @@ flowchart LR
 ## Inputs and outputs
 
 **Inputs**:
-- schema JSON (extracted from OS cache snapshot by chaim-cli)
+- Array of schema JSON objects (extracted from OS cache snapshots by chaim-cli)
 - Java package name
-- output directory
-- optional table metadata JSON (extracted from OS cache snapshot by chaim-cli)
+- Output directory
+- Table metadata JSON (tableName, tableArn, region)
 
 **Outputs**:
-- .java files written to the output directory under the provided package namespace
+- `.java` files written to the output directory under the provided package namespace
 
 ---
 
 ## CLI interface
 
-Java is invoked like this:
+Java is invoked with **multiple schemas** (single-table design):
+
+```bash
+# Inline JSON array
+java -jar codegen-java.jar \
+  --schemas '[{"schemaVersion":"v1",...},{"schemaVersion":"v1",...}]' \
+  --package com.example.model \
+  --output ./src/main/java \
+  --table-metadata '{"tableName":"DataTable","tableArn":"arn:..."}'
+
+# File-based (for large payloads)
+java -jar codegen-java.jar \
+  --schemas-file /tmp/schemas.json \
+  --package com.example.model \
+  --output ./src/main/java \
+  --table-metadata '{"tableName":"DataTable",...}'
+```
+
+**Legacy single-schema mode** (backwards compatible):
 
 ```bash
 java -jar codegen-java.jar \
@@ -81,10 +120,14 @@ java -jar codegen-java.jar \
 
 | Argument | Required | Description |
 |----------|----------|-------------|
-| `--schema` | Yes | Schema JSON string |
+| `--schemas` | Yes* | JSON array of schema objects |
+| `--schemas-file` | Yes* | Path to file containing JSON array of schemas |
+| `--schema` | Yes* | Single schema JSON (legacy) |
 | `--package` | Yes | Java package name |
 | `--output` | Yes | Output directory |
 | `--table-metadata` | No | Table metadata JSON string |
+
+*One of `--schemas`, `--schemas-file`, or `--schema` is required.
 
 ---
 
@@ -134,7 +177,7 @@ chaim-client-java/
 ### codegen-java
 
 **Responsibilities**:
-- Parse command-line args
+- Parse command-line args (single or multiple schemas)
 - Parse schema and metadata JSON payloads
 - Generate Java source files via JavaPoet
 
@@ -142,21 +185,138 @@ chaim-client-java/
 | Class | Purpose |
 |-------|---------|
 | `Main` | Entry point for `java -jar` |
-| `JavaGenerator` | Generates DTOs, config, and mapper client |
+| `JavaGenerator` | Generates DTOs, keys, repositories, client, config |
 
 ---
 
 ## Generated output layout
 
-Example: `--package com.example.model`
+Example: `--package com.example.model` with User and Order schemas
 
 ```
 com/example/model/
-├── Users.java              # Entity DTO
-├── config/
-│   └── ChaimConfig.java    # Table configuration
-└── mapper/
-    └── ChaimMapperClient.java  # DynamoDB mapper
+├── User.java                      # Entity DTO with pk/sk
+├── Order.java                     # Entity DTO with pk/sk
+├── keys/
+│   ├── UserKeys.java              # Key composition helpers
+│   └── OrderKeys.java             # Key composition helpers
+├── repository/
+│   ├── UserRepository.java        # PK/SK-based CRUD
+│   └── OrderRepository.java       # PK/SK-based CRUD
+├── client/
+│   └── ChaimDynamoDbClient.java   # DI-friendly client wrapper
+└── config/
+    └── ChaimConfig.java           # Constants + repository factories
+```
+
+---
+
+## Generated artifacts detail
+
+### Entity DTO (`User.java`)
+
+```java
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+@DynamoDbBean
+public class User {
+    private String pk;    // Partition key (e.g., "USER#user-123")
+    private String sk;    // Sort key (e.g., "USER")
+    private String userId;
+    private String email;
+
+    @DynamoDbPartitionKey
+    public String getPk() { return pk; }
+
+    @DynamoDbSortKey
+    public String getSk() { return sk; }
+}
+```
+
+### Key Helpers (`UserKeys.java`)
+
+```java
+public final class UserKeys {
+    public static final String ENTITY_PREFIX = "USER#";
+    public static final String DEFAULT_SK = "USER";
+
+    public static String pk(String userId) {
+        return ENTITY_PREFIX + userId;
+    }
+
+    public static String sk() {
+        return DEFAULT_SK;
+    }
+
+    public static Key key(String userId) {
+        return Key.builder()
+            .partitionValue(pk(userId))
+            .sortValue(sk())
+            .build();
+    }
+}
+```
+
+### Repository (`UserRepository.java`)
+
+```java
+public class UserRepository {
+    private final DynamoDbTable<User> table;
+
+    // Constructor with ChaimDynamoDbClient
+    public UserRepository(ChaimDynamoDbClient client) { ... }
+
+    // Constructor for DI/testing
+    public UserRepository(DynamoDbEnhancedClient enhancedClient, String tableName) { ... }
+
+    public void save(User entity) { ... }
+    public Optional<User> findByPkSk(String pk, String sk) { ... }
+    public Optional<User> findByUserId(String userId) { ... }  // Convenience
+    public void deleteByPkSk(String pk, String sk) { ... }
+    public void deleteByUserId(String userId) { ... }  // Convenience
+    // NOTE: No findAll() or scan() - intentionally omitted
+}
+```
+
+### DI-Friendly Client (`ChaimDynamoDbClient.java`)
+
+```java
+public class ChaimDynamoDbClient {
+    public static Builder builder() { ... }
+    public static ChaimDynamoDbClient wrap(DynamoDbEnhancedClient client, String tableName) { ... }
+
+    public DynamoDbEnhancedClient getEnhancedClient() { ... }
+    public String getTableName() { ... }
+
+    public static class Builder {
+        public Builder tableName(String tableName) { ... }
+        public Builder region(String region) { ... }
+        public Builder endpoint(String endpoint) { ... }  // For local DynamoDB
+        public Builder existingClient(DynamoDbEnhancedClient client) { ... }  // For DI
+        public ChaimDynamoDbClient build() { ... }
+    }
+}
+```
+
+### Configuration (`ChaimConfig.java`)
+
+```java
+public class ChaimConfig {
+    public static final String TABLE_NAME = "DataTable";
+    public static final String TABLE_ARN = "arn:aws:dynamodb:...";
+    public static final String REGION = "us-east-1";
+
+    public static ChaimDynamoDbClient getClient() { ... }  // Lazy singleton
+    public static ChaimDynamoDbClient.Builder clientBuilder() { ... }
+
+    // Repository factory methods
+    public static UserRepository userRepository() { ... }
+    public static UserRepository userRepository(ChaimDynamoDbClient client) { ... }
+    public static OrderRepository orderRepository() { ... }
+    public static OrderRepository orderRepository(ChaimDynamoDbClient client) { ... }
+}
 ```
 
 ---
@@ -170,6 +330,20 @@ com/example/model/
 | `boolean` | `Boolean` |
 | `timestamp` | `Instant` |
 | (unknown) | `Object` |
+
+---
+
+## Annotations used
+
+| Annotation | Source | Purpose |
+|------------|--------|---------|
+| `@DynamoDbBean` | AWS SDK | Marks class as DynamoDB entity |
+| `@DynamoDbPartitionKey` | AWS SDK | Marks partition key getter |
+| `@DynamoDbSortKey` | AWS SDK | Marks sort key getter |
+| `@Data` | Lombok | Generates getters, setters, equals, hashCode, toString |
+| `@Builder` | Lombok | Generates builder pattern |
+| `@NoArgsConstructor` | Lombok | Generates no-args constructor |
+| `@AllArgsConstructor` | Lombok | Generates all-args constructor |
 
 ---
 
@@ -222,11 +396,21 @@ chaim-cli imports `JavaGenerator` from `@chaim-tools/client-java`:
 import { JavaGenerator } from '@chaim-tools/client-java';
 
 const generator = new JavaGenerator();
+
+// New API: multiple schemas for single-table design
+await generator.generateForTable(
+  schemas,          // Array of schema objects
+  packageName,      // --package flag
+  outputDir,        // --output flag
+  tableMetadata     // { tableName, tableArn, region }
+);
+
+// Legacy API: single schema (wraps generateForTable internally)
 await generator.generate(
-  snapshot.schema,    // Schema from snapshot
-  packageName,        // --package flag
-  outputDir,          // --output flag
-  tableMetadata       // Extracted from snapshot.dataStore
+  schema,           // Single schema object
+  packageName,
+  outputDir,
+  tableMetadata
 );
 ```
 
@@ -248,11 +432,11 @@ await generator.generate(
 
 | Component | Version |
 |-----------|---------|
-| **Java** | **22** (required — JAR is compiled with `--release 22`) |
+| **Java** | **17 LTS** (runtime — JAR is compiled with `--release 17`) |
 | **Node.js** | 18+ |
 | **Gradle** | 8+ |
 
-> ⚠️ **Java 22 is required at runtime**. The JAR will not run on older JVMs.
+> ✅ **Java 17 LTS** is required at runtime. This ensures broad enterprise compatibility.
 
 ---
 
@@ -261,10 +445,12 @@ await generator.generate(
 | Task | Where |
 |------|-------|
 | Add a new bprint field type | `schema-core/.../FieldType.java` and `codegen-java/.../JavaGenerator.java` (mapType) |
-| Change mapper client API shape | `codegen-java/.../JavaGenerator.java` (generateChaimMapperClient) |
+| Change repository methods | `codegen-java/.../JavaGenerator.java` (generateRepository) |
 | Add a new generated file | `codegen-java/.../JavaGenerator.java` (add new generate method) |
 | Add new table metadata fields | `cdk-integration/.../TableMetadata.java` and `codegen-java/.../Main.java` (parseTableMetadata) |
 | Change CLI argument parsing | `codegen-java/.../Main.java` |
+| Change key composition logic | `codegen-java/.../JavaGenerator.java` (generateEntityKeys) |
+| Change client builder | `codegen-java/.../JavaGenerator.java` (generateChaimDynamoDbClient) |
 
 ---
 
@@ -275,6 +461,7 @@ This package does **not**:
 - Validate cloud account permissions
 - Parse bprint from disk — it receives schema JSON from chaim-cli
 - Generate code for languages other than Java
+- Generate `scan()` or `findAll()` methods (NoSQL anti-pattern)
 
 ---
 

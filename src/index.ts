@@ -1,7 +1,11 @@
 import { spawn } from 'child_process';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import chalk from 'chalk';
+
+// Threshold for using file-based schema passing (100KB)
+const FILE_THRESHOLD_BYTES = 100000;
 
 export class JavaGenerator {
   private javaGeneratorPath: string;
@@ -16,21 +20,54 @@ export class JavaGenerator {
     this.javaGeneratorPath = fs.existsSync(bundledJar) ? bundledJar : devJar;
   }
 
+  /**
+   * Generate code for a single schema (legacy API, wraps generateForTable).
+   */
   async generate(schema: any, packageName: string, outputDir: string, tableMetadata?: any): Promise<void> {
+    return this.generateForTable([schema], packageName, outputDir, tableMetadata);
+  }
+
+  /**
+   * Generate code for multiple schemas sharing the same table.
+   * This is the primary API for single-table design support.
+   * 
+   * @param schemas - Array of .bprint schemas for entities in this table
+   * @param packageName - Java package name for generated code
+   * @param outputDir - Output directory for generated files
+   * @param tableMetadata - Table metadata (name, ARN, region, keys)
+   */
+  async generateForTable(
+    schemas: any[], 
+    packageName: string, 
+    outputDir: string, 
+    tableMetadata?: any
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       // Ensure output directory exists
       if (!fs.existsSync(outputDir)) {
         fs.mkdirSync(outputDir, { recursive: true });
       }
 
+      const schemasJson = JSON.stringify(schemas);
+      let tempFile: string | null = null;
+      
       // Prepare arguments for Java generator
       const args = [
         '-jar',
         this.javaGeneratorPath,
-        '--schema', JSON.stringify(schema),
-        '--package', packageName,
-        '--output', outputDir
       ];
+
+      // Use file-based passing for large payloads
+      if (schemasJson.length > FILE_THRESHOLD_BYTES) {
+        tempFile = path.join(os.tmpdir(), `chaim-schemas-${Date.now()}.json`);
+        fs.writeFileSync(tempFile, schemasJson);
+        args.push('--schemas-file', tempFile);
+      } else {
+        args.push('--schemas', schemasJson);
+      }
+
+      args.push('--package', packageName);
+      args.push('--output', outputDir);
 
       if (tableMetadata) {
         args.push('--table-metadata', JSON.stringify(tableMetadata));
@@ -53,6 +90,15 @@ export class JavaGenerator {
       });
 
       javaProcess.on('close', (code) => {
+        // Clean up temp file if used
+        if (tempFile && fs.existsSync(tempFile)) {
+          try {
+            fs.unlinkSync(tempFile);
+          } catch {
+            // Ignore cleanup errors
+          }
+        }
+
         if (code === 0) {
           if (stdout) {
             console.log(chalk.gray(stdout));
@@ -71,6 +117,14 @@ export class JavaGenerator {
       });
 
       javaProcess.on('error', (error) => {
+        // Clean up temp file on error
+        if (tempFile && fs.existsSync(tempFile)) {
+          try {
+            fs.unlinkSync(tempFile);
+          } catch {
+            // Ignore cleanup errors
+          }
+        }
         console.error(chalk.red('Failed to start Java generator:'), error.message);
         reject(error);
       });
