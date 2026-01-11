@@ -4,19 +4,26 @@ A comprehensive Java SDK for the Chaim framework that provides code generation, 
 
 ## Overview
 
-The chaim-client-java is a **hybrid Java/TypeScript package** that serves as the code generation engine for the Chaim ecosystem:
+The chaim-client-java is a **hybrid Java/TypeScript package** that serves as the code generation engine for the Chaim ecosystem. It is an **internal dependency** of `chaim-cli` — end users should not invoke it directly.
 
 - **Schema Parsing**: Parse and validate schema JSON (received from chaim-cli)
 - **Code Generation**: Generate Java DTOs, ChaimConfig, and ChaimMapperClient classes
 - **TypeScript Wrapper**: Node.js interface for integration with chaim-cli
 - **npm Distribution**: Bundled JAR for seamless npm installation
 
+**Invocation Model**:
+```
+End users → chaim-cli → chaim-client-java (internal)
+```
+
 **Data Flow**:
 ```
 .bprint file → chaim-cdk → OS cache snapshot → chaim-cli → chaim-client-java → .java files
+                                                   ↑
+                                            user runs this
 ```
 
-> **Note**: This package does not read `.bprint` files or OS cache snapshots directly. It receives parsed schema JSON from `chaim-cli`.
+> **Note**: This package does not read `.bprint` files or OS cache snapshots directly. It receives parsed schema JSON from `chaim-cli`. Direct invocation is only for local development/testing.
 
 ## Installation
 
@@ -63,15 +70,27 @@ chaim-client-java/
 
 ## Usage
 
-### From chaim-cli (Recommended)
+### From chaim-cli (End User Method)
 
-The CLI handles everything automatically:
+End users should always use the CLI — it handles snapshot discovery and invokes this package internally:
 
 ```bash
-chaim generate --package com.example.model
+chaim generate --package com.example.model --language java
 ```
 
-### As Node.js Module
+The CLI:
+1. Reads snapshots from OS cache (`~/.chaim/cache/snapshots/`)
+2. Extracts schema and metadata
+3. Invokes chaim-client-java internally
+4. Writes generated `.java` files to the output directory
+
+---
+
+### Direct Invocation (Development/Testing Only)
+
+The following methods are for package maintainers and local testing only.
+
+#### As Node.js Module (Internal)
 
 ```typescript
 import { JavaGenerator } from '@chaim-tools/client-java';
@@ -85,7 +104,7 @@ await generator.generate(
 );
 ```
 
-### As Java Library
+#### As Java Library (Testing)
 
 ```java
 import io.chaim.generators.java.JavaGenerator;
@@ -96,7 +115,7 @@ JavaGenerator generator = new JavaGenerator();
 generator.generate(schema, "com.example.model", Path.of("src/main/java"), tableMetadata);
 ```
 
-### As CLI
+#### As CLI (Testing)
 
 ```bash
 java -jar codegen-java.jar \
