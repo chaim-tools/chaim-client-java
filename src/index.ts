@@ -8,7 +8,12 @@ export class JavaGenerator {
 
   constructor() {
     // Path to the Java generator JAR
-    this.javaGeneratorPath = path.join(__dirname, '../codegen-java/build/libs/codegen-java-0.1.0.jar');
+    // When published: dist/jars/codegen-java-0.1.0.jar (bundled during build)
+    // During development: codegen-java/build/libs/codegen-java-0.1.0.jar
+    const bundledJar = path.join(__dirname, 'jars', 'codegen-java-0.1.0.jar');
+    const devJar = path.join(__dirname, '../codegen-java/build/libs/codegen-java-0.1.0.jar');
+    
+    this.javaGeneratorPath = fs.existsSync(bundledJar) ? bundledJar : devJar;
   }
 
   async generate(schema: any, packageName: string, outputDir: string, tableMetadata?: any): Promise<void> {

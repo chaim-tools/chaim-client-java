@@ -6,9 +6,6 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
-    "build",
-    "src",
-    "*.jar",
     "README.md",
     "LICENSE"
   ],
@@ -16,9 +13,10 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "npm run build:java && npm run build:ts",
+    "build": "npm run build:java && npm run build:ts && npm run bundle:jar",
     "build:java": "./gradlew build",
     "build:ts": "tsc",
+    "bundle:jar": "mkdir -p dist/jars && cp codegen-java/build/libs/codegen-java-*.jar dist/jars/",
     "clean": "./gradlew clean && rm -rf dist",
     "test": "./gradlew test",
     "test:java": "./gradlew test",
