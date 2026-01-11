@@ -162,7 +162,7 @@ TableMetadata metadata = reader.extractTableMetadata(outputs, "MyTable");
 ### As a Node.js Module
 
 ```typescript
-import { JavaGenerator } from '@chaim/client-java';
+import { JavaGenerator } from '@chaim-tools/client-java';
 
 const generator = new JavaGenerator();
 await generator.generate(schema, 'com.example.model', './generated', tableMetadata);

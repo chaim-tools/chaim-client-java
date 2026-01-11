@@ -1,11 +1,20 @@
 {
-  "name": "@chaim/client-java",
+  "name": "@chaim-tools/client-java",
   "version": "0.1.0",
   "description": "Java code generation and SDK creation for Chaim schemas",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist", "build", "src", "*.jar", "README.md", "LICENSE"],
-  "engines": { "node": ">=18" },
+  "files": [
+    "dist",
+    "build",
+    "src",
+    "*.jar",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "npm run build:java && npm run build:ts",
     "build:java": "./gradlew build",
@@ -28,15 +37,15 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/chaim-builder/chaim-client-java.git"
+    "url": "https://github.com/chaim-tools/chaim-client-java.git"
   },
   "bugs": {
-    "url": "https://github.com/chaim-builder/chaim-client-java/issues"
+    "url": "https://github.com/chaim-tools/chaim-client-java/issues"
   },
-  "homepage": "https://github.com/chaim-builder/chaim-client-java#readme",
+  "homepage": "https://github.com/chaim-tools/chaim-client-java#readme",
   "dependencies": {
-    "@chaim/bprint-spec": "file:../chaim-bprint-spec",
-    "@chaim/cdk": "file:../chaim-cdk"
+    "@chaim-tools/chaim-bprint-spec": "^0.1.0",
+    "@chaim-tools/cdk": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",

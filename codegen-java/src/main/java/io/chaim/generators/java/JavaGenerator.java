@@ -18,8 +18,11 @@ public class JavaGenerator {
     }
 
     public void generate(BprintSchema schema, String pkg, Path outDir, TableMetadata tableMetadata) throws IOException {
+        // Derive entity name from namespace or entity.name
+        String entityName = deriveEntityName(schema);
+        
         // Generate entity DTO
-        TypeSpec entityType = generateEntity(schema.schemaVersion, schema.entity);
+        TypeSpec entityType = generateEntity(schema.schemaVersion, schema.entity, entityName);
         JavaFile.builder(pkg, entityType)
             .skipJavaLangImports(true)
             .build()
@@ -34,16 +37,38 @@ public class JavaGenerator {
                 .writeTo(outDir);
 
             // Generate ChaimMapperClient
-            TypeSpec mapperType = generateChaimMapperClient(schema.entity.name, pkg + ".model");
+            TypeSpec mapperType = generateChaimMapperClient(entityName, pkg);
             JavaFile.builder(pkg + ".mapper", mapperType)
                 .skipJavaLangImports(true)
                 .build()
                 .writeTo(outDir);
         }
     }
+    
+    /**
+     * Derive entity name from schema.
+     * Priority: entity.name > last part of namespace (capitalized) > "Entity"
+     */
+    private String deriveEntityName(BprintSchema schema) {
+        // First try entity.name
+        if (schema.entity != null && schema.entity.name != null && !schema.entity.name.isEmpty()) {
+            return schema.entity.name;
+        }
+        
+        // Then try deriving from namespace (e.g., "example.users" -> "Users")
+        if (schema.namespace != null && !schema.namespace.isEmpty()) {
+            String[] parts = schema.namespace.split("\\.");
+            String lastPart = parts[parts.length - 1];
+            // Capitalize first letter
+            return lastPart.substring(0, 1).toUpperCase() + lastPart.substring(1);
+        }
+        
+        // Fallback
+        return "Entity";
+    }
 
-    private TypeSpec generateEntity(String schemaVersion, BprintSchema.Entity entity) {
-        TypeSpec.Builder tb = TypeSpec.classBuilder(entity.name)
+    private TypeSpec generateEntity(String schemaVersion, BprintSchema.Entity entity, String entityName) {
+        TypeSpec.Builder tb = TypeSpec.classBuilder(entityName)
             .addModifiers(Modifier.PUBLIC);
 
         // chaimVersion constant
@@ -87,7 +112,7 @@ public class JavaGenerator {
         tb.addMethod(MethodSpec.methodBuilder("validate")
             .addModifiers(Modifier.PUBLIC)
             .addException(IllegalArgumentException.class)
-            .addCode(buildValidateBody(entity))
+            .addCode(buildValidateBody(entity, entityName))
             .build());
 
         return tb.build();
@@ -196,12 +221,12 @@ public class JavaGenerator {
         return tb.build();
     }
 
-    private CodeBlock buildValidateBody(BprintSchema.Entity entity) {
+    private CodeBlock buildValidateBody(BprintSchema.Entity entity, String entityName) {
         CodeBlock.Builder cb = CodeBlock.builder();
         for (BprintSchema.Field field : entity.fields) {
             if (field.required) {
                 cb.addStatement("if (this.$L == null) throw new IllegalArgumentException($S)",
-                    field.name, entity.name + "." + field.name + " is required");
+                    field.name, entityName + "." + field.name + " is required");
             }
         }
         return cb.build();
