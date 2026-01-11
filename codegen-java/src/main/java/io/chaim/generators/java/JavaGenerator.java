@@ -224,9 +224,71 @@ public class JavaGenerator {
     private CodeBlock buildValidateBody(BprintSchema.Entity entity, String entityName) {
         CodeBlock.Builder cb = CodeBlock.builder();
         for (BprintSchema.Field field : entity.fields) {
+            // Required field check
             if (field.required) {
                 cb.addStatement("if (this.$L == null) throw new IllegalArgumentException($S)",
                     field.name, entityName + "." + field.name + " is required");
+            }
+            
+            // Enum validation for string fields
+            if (field.enumValues != null && !field.enumValues.isEmpty() && "string".equals(field.type)) {
+                String enumValuesStr = String.join(", ", field.enumValues);
+                cb.beginControlFlow("if (this.$L != null)", field.name);
+                // Build Set.of("val1", "val2", ...) with proper formatting
+                StringBuilder setOfArgs = new StringBuilder();
+                for (int i = 0; i < field.enumValues.size(); i++) {
+                    if (i > 0) setOfArgs.append(", ");
+                    setOfArgs.append("\"").append(field.enumValues.get(i)).append("\"");
+                }
+                cb.addStatement("java.util.Set<String> allowedValues = java.util.Set.of($L)", setOfArgs.toString());
+                cb.addStatement("if (!allowedValues.contains(this.$L)) throw new IllegalArgumentException($S + this.$L)",
+                    field.name, 
+                    entityName + "." + field.name + " must be one of [" + enumValuesStr + "], got: ",
+                    field.name);
+                cb.endControlFlow();
+            }
+            
+            // Constraints validation
+            if (field.constraints != null) {
+                BprintSchema.Constraints c = field.constraints;
+                
+                // String constraints
+                if ("string".equals(field.type)) {
+                    if (c.minLength != null) {
+                        cb.beginControlFlow("if (this.$L != null && this.$L.length() < $L)", field.name, field.name, c.minLength);
+                        cb.addStatement("throw new IllegalArgumentException($S)",
+                            entityName + "." + field.name + " must be at least " + c.minLength + " characters");
+                        cb.endControlFlow();
+                    }
+                    if (c.maxLength != null) {
+                        cb.beginControlFlow("if (this.$L != null && this.$L.length() > $L)", field.name, field.name, c.maxLength);
+                        cb.addStatement("throw new IllegalArgumentException($S)",
+                            entityName + "." + field.name + " must be at most " + c.maxLength + " characters");
+                        cb.endControlFlow();
+                    }
+                    if (c.pattern != null) {
+                        cb.beginControlFlow("if (this.$L != null && !this.$L.matches($S))", field.name, field.name, c.pattern);
+                        cb.addStatement("throw new IllegalArgumentException($S)",
+                            entityName + "." + field.name + " must match pattern: " + c.pattern);
+                        cb.endControlFlow();
+                    }
+                }
+                
+                // Number constraints
+                if ("number".equals(field.type)) {
+                    if (c.min != null) {
+                        cb.beginControlFlow("if (this.$L != null && this.$L < $L)", field.name, field.name, c.min);
+                        cb.addStatement("throw new IllegalArgumentException($S)",
+                            entityName + "." + field.name + " must be >= " + c.min);
+                        cb.endControlFlow();
+                    }
+                    if (c.max != null) {
+                        cb.beginControlFlow("if (this.$L != null && this.$L > $L)", field.name, field.name, c.max);
+                        cb.addStatement("throw new IllegalArgumentException($S)",
+                            entityName + "." + field.name + " must be <= " + c.max);
+                        cb.endControlFlow();
+                    }
+                }
             }
         }
         return cb.build();

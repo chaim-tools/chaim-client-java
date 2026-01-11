@@ -37,6 +37,33 @@ public class BprintSchema {
     public Object defaultValue;
     @JsonAlias({"enum", "enumValues"})
     public List<String> enumValues;
+    public Constraints constraints;
+    public FieldAnnotations annotations;
+  }
+
+  /**
+   * Field-level constraints for validation.
+   * String constraints: minLength, maxLength, pattern
+   * Number constraints: min, max
+   */
+  @JsonIgnoreProperties(ignoreUnknown = true)
+  public static class Constraints {
+    // String constraints
+    public Integer minLength;
+    public Integer maxLength;
+    public String pattern;
+    
+    // Number constraints
+    public Double min;
+    public Double max;
+  }
+
+  /**
+   * Field-level annotations for custom metadata.
+   */
+  @JsonIgnoreProperties(ignoreUnknown = true)
+  public static class FieldAnnotations {
+    // Extensible - add specific annotation fields as needed
   }
 
   public static class Annotations {
