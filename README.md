@@ -1,15 +1,22 @@
 # chaim-client-java
 
-A comprehensive Java SDK for the Chaim framework that provides code generation, schema validation, and AWS DynamoDB integration. This package generates Java DTOs, configuration classes, and DynamoDB mapper clients from `.bprint` schemas.
+A comprehensive Java SDK for the Chaim framework that provides code generation, schema validation, and AWS DynamoDB integration. This package generates Java DTOs, configuration classes, and DynamoDB mapper clients from schema JSON extracted from OS cache snapshots.
 
 ## Overview
 
 The chaim-client-java is a **hybrid Java/TypeScript package** that serves as the code generation engine for the Chaim ecosystem:
 
-- **Schema Parsing**: Load and validate Chaim `.bprint` schemas
+- **Schema Parsing**: Parse and validate schema JSON (received from chaim-cli)
 - **Code Generation**: Generate Java DTOs, ChaimConfig, and ChaimMapperClient classes
 - **TypeScript Wrapper**: Node.js interface for integration with chaim-cli
 - **npm Distribution**: Bundled JAR for seamless npm installation
+
+**Data Flow**:
+```
+.bprint file → chaim-cdk → OS cache snapshot → chaim-cli → chaim-client-java → .java files
+```
+
+> **Note**: This package does not read `.bprint` files or OS cache snapshots directly. It receives parsed schema JSON from `chaim-cli`.
 
 ## Installation
 
@@ -34,7 +41,7 @@ npm run build
 
 ## Requirements
 
-- **Java**: 11+ (runtime for code generation)
+- **Java**: 22 (runtime — JAR is compiled with `--release 22`)
 - **Node.js**: 18+ (for TypeScript wrapper)
 - **Gradle**: 8+ (for building from source)
 
@@ -176,7 +183,7 @@ npm run clean
 ### schema-core
 
 Core schema handling:
-- `BprintLoader` - Load `.bprint` JSON files
+- `BprintLoader` - Load schema JSON strings
 - `BprintValidator` - Validate schema structure
 - `BprintSchema` - Java model with Jackson annotations
 - `FieldType` - Type mapping utilities
