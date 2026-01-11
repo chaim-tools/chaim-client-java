@@ -108,26 +108,15 @@ java -jar codegen-java.jar \
   --table-metadata '{"tableName":"DataTable",...}'
 ```
 
-**Legacy single-schema mode** (backwards compatible):
-
-```bash
-java -jar codegen-java.jar \
-  --schema '<schemaJson>' \
-  --package com.example.model \
-  --output ./src/main/java \
-  --table-metadata '<tableMetadataJson>'
-```
-
 | Argument | Required | Description |
 |----------|----------|-------------|
 | `--schemas` | Yes* | JSON array of schema objects |
 | `--schemas-file` | Yes* | Path to file containing JSON array of schemas |
-| `--schema` | Yes* | Single schema JSON (legacy) |
 | `--package` | Yes | Java package name |
 | `--output` | Yes | Output directory |
 | `--table-metadata` | No | Table metadata JSON string |
 
-*One of `--schemas`, `--schemas-file`, or `--schema` is required.
+*One of `--schemas` or `--schemas-file` is required.
 
 ---
 
@@ -397,20 +386,11 @@ import { JavaGenerator } from '@chaim-tools/client-java';
 
 const generator = new JavaGenerator();
 
-// New API: multiple schemas for single-table design
 await generator.generateForTable(
   schemas,          // Array of schema objects
   packageName,      // --package flag
   outputDir,        // --output flag
   tableMetadata     // { tableName, tableArn, region }
-);
-
-// Legacy API: single schema (wraps generateForTable internally)
-await generator.generate(
-  schema,           // Single schema object
-  packageName,
-  outputDir,
-  tableMetadata
 );
 ```
 

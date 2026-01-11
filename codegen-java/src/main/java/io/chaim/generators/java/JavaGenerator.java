@@ -51,22 +51,6 @@ public class JavaGenerator {
         "software.amazon.awssdk.regions", "Region");
 
     /**
-     * Legacy single-schema API - wraps generateForTable.
-     */
-    public void generate(BprintSchema schema, String pkg, Path outDir) throws IOException {
-        generate(schema, pkg, outDir, null);
-    }
-
-    /**
-     * Legacy single-schema API - wraps generateForTable.
-     */
-    public void generate(BprintSchema schema, String pkg, Path outDir, TableMetadata tableMetadata) throws IOException {
-        List<BprintSchema> schemas = new ArrayList<>();
-        schemas.add(schema);
-        generateForTable(schemas, pkg, outDir, tableMetadata);
-    }
-
-    /**
      * Generate code for multiple schemas sharing the same DynamoDB table.
      * This is the primary API for single-table design support.
      * 

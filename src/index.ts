@@ -21,13 +21,6 @@ export class JavaGenerator {
   }
 
   /**
-   * Generate code for a single schema (legacy API, wraps generateForTable).
-   */
-  async generate(schema: any, packageName: string, outputDir: string, tableMetadata?: any): Promise<void> {
-    return this.generateForTable([schema], packageName, outputDir, tableMetadata);
-  }
-
-  /**
    * Generate code for multiple schemas sharing the same table.
    * This is the primary API for single-table design support.
    * 

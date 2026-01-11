@@ -15,10 +15,7 @@ import java.util.List;
 /**
  * CLI entry point for the Java code generator.
  * 
- * Usage (single schema - legacy):
- *   java -jar codegen-java.jar --schema <json> --package <pkg> --output <dir> [--table-metadata <json>]
- * 
- * Usage (multiple schemas - single-table design):
+ * Usage:
  *   java -jar codegen-java.jar --schemas <json-array> --package <pkg> --output <dir> [--table-metadata <json>]
  *   java -jar codegen-java.jar --schemas-file <path> --package <pkg> --output <dir> [--table-metadata <json>]
  */
@@ -28,7 +25,6 @@ public class Main {
     
     public static void main(String[] args) {
         try {
-            String schemaJson = null;      // Single schema (legacy)
             String schemasJson = null;     // Multiple schemas (JSON array)
             String schemasFile = null;     // Path to file containing schemas JSON
             String packageName = null;
@@ -38,9 +34,6 @@ public class Main {
             // Parse arguments
             for (int i = 0; i < args.length; i++) {
                 switch (args[i]) {
-                    case "--schema":
-                        schemaJson = args[++i];
-                        break;
                     case "--schemas":
                         schemasJson = args[++i];
                         break;
@@ -63,9 +56,9 @@ public class Main {
             }
             
             // Validate required args
-            boolean hasSchemaInput = schemaJson != null || schemasJson != null || schemasFile != null;
+            boolean hasSchemaInput = schemasJson != null || schemasFile != null;
             if (!hasSchemaInput || packageName == null || outputDir == null) {
-                System.err.println("Usage: java -jar codegen-java.jar [--schema <json> | --schemas <json-array> | --schemas-file <path>] --package <pkg> --output <dir> [--table-metadata <json>]");
+                System.err.println("Usage: java -jar codegen-java.jar [--schemas <json-array> | --schemas-file <path>] --package <pkg> --output <dir> [--table-metadata <json>]");
                 System.exit(1);
             }
             
@@ -79,10 +72,6 @@ public class Main {
             } else if (schemasJson != null) {
                 // Parse schemas from JSON array string
                 schemas = MAPPER.readValue(schemasJson, new TypeReference<List<BprintSchema>>() {});
-            } else if (schemaJson != null) {
-                // Legacy single schema mode
-                BprintSchema schema = MAPPER.readValue(schemaJson, BprintSchema.class);
-                schemas.add(schema);
             }
             
             if (schemas.isEmpty()) {

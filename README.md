@@ -105,14 +105,6 @@ await generator.generateForTable(
   './src/main/java',          // Output directory
   tableMetadata               // { tableName, tableArn, region }
 );
-
-// Legacy single-schema API (still supported)
-await generator.generate(
-  schema,
-  'com.example.model',
-  './src/main/java',
-  tableMetadata
-);
 ```
 
 #### As Java Library (Testing)
@@ -151,12 +143,6 @@ java -jar codegen-java.jar \
   --package com.example.model \
   --output ./src/main/java \
   --table-metadata '{"tableName":"DataTable",...}'
-
-# Legacy single schema (backwards compatible)
-java -jar codegen-java.jar \
-  --schema '{"schemaVersion":"v1",...}' \
-  --package com.example.model \
-  --output ./src/main/java
 ```
 
 ## Generated Output

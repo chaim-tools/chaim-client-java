@@ -291,21 +291,6 @@ public class JavaGeneratorTest {
   }
 
   @Test
-  void legacySingleSchemaApiStillWorks() throws Exception {
-    Path out = tempDir.resolve("generated");
-    
-    // Use legacy single-schema API
-    generator.generate(userSchema, "com.example.model", out, tableMetadata);
-
-    // Should generate all files
-    assertThat(Files.exists(out.resolve("com/example/model/User.java"))).isTrue();
-    assertThat(Files.exists(out.resolve("com/example/model/keys/UserKeys.java"))).isTrue();
-    assertThat(Files.exists(out.resolve("com/example/model/repository/UserRepository.java"))).isTrue();
-    assertThat(Files.exists(out.resolve("com/example/model/client/ChaimDynamoDbClient.java"))).isTrue();
-    assertThat(Files.exists(out.resolve("com/example/model/config/ChaimConfig.java"))).isTrue();
-  }
-
-  @Test
   void derivesEntityNameFromNamespace() throws Exception {
     // Create schema without explicit entity.name
     BprintSchema schemaWithoutName = new BprintSchema();
