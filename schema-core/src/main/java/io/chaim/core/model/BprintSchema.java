@@ -7,7 +7,7 @@ import java.util.Objects;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class BprintSchema {
-  public String schemaVersion;
+  public Double schemaVersion;
   public String namespace;
   public String description;
   public Entity entity;

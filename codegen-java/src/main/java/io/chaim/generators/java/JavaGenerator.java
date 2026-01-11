@@ -67,13 +67,13 @@ public class JavaGenerator {
         return "Entity";
     }
 
-    private TypeSpec generateEntity(String schemaVersion, BprintSchema.Entity entity, String entityName) {
+    private TypeSpec generateEntity(Double schemaVersion, BprintSchema.Entity entity, String entityName) {
         TypeSpec.Builder tb = TypeSpec.classBuilder(entityName)
             .addModifiers(Modifier.PUBLIC);
 
         // chaimVersion constant
-        FieldSpec cv = FieldSpec.builder(String.class, "chaimVersion", Modifier.PRIVATE, Modifier.FINAL)
-            .initializer("$S", schemaVersion)
+        FieldSpec cv = FieldSpec.builder(Double.class, "chaimVersion", Modifier.PRIVATE, Modifier.FINAL)
+            .initializer("$L", schemaVersion)
             .build();
         tb.addField(cv);
 
@@ -104,7 +104,7 @@ public class JavaGenerator {
         // getChaimVersion
         tb.addMethod(MethodSpec.methodBuilder("getChaimVersion")
             .addModifiers(Modifier.PUBLIC)
-            .returns(String.class)
+            .returns(Double.class)
             .addStatement("return this.chaimVersion")
             .build());
 

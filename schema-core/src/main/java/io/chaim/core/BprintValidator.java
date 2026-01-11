@@ -8,7 +8,7 @@ import java.util.Set;
 public final class BprintValidator {
 
   public static void validate(BprintSchema s) {
-    if (isBlank(s.schemaVersion)) fail("schemaVersion required");
+    if (s.schemaVersion == null) fail("schemaVersion required");
     if (isBlank(s.namespace)) fail("namespace required");
     if (isBlank(s.description)) fail("description required");
     if (s.entity == null) fail("entity is required");

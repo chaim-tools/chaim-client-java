@@ -13,7 +13,7 @@ public class BprintValidatorTest {
   @Test
   void validatesHappyPath() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -57,9 +57,10 @@ public class BprintValidatorTest {
   }
 
   @Test
-  void rejectsEmptySchemaVersion() {
+  void acceptsValidSchemaVersion() {
+    // schemaVersion is now a Double, so test that various valid versions are accepted
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -75,15 +76,18 @@ public class BprintValidatorTest {
     e.fields = List.of(f);
     s.entity = e;
 
-    assertThatThrownBy(() -> BprintValidator.validate(s))
-      .isInstanceOf(IllegalArgumentException.class)
-      .hasMessageContaining("schemaVersion required");
+    // Should not throw - validates successfully
+    BprintValidator.validate(s);
+
+    // Also test version 2.0
+    s.schemaVersion = 2.0;
+    BprintValidator.validate(s);
   }
 
   @Test
   void rejectsMissingNamespace() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = null;
     s.description = "Basic order management system";
 
@@ -107,7 +111,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsEmptyNamespace() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "";
     s.description = "Basic order management system";
 
@@ -131,7 +135,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsMissingDescription() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = null;
 
@@ -155,7 +159,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsEmptyDescription() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "";
 
@@ -179,7 +183,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsMissingEntity() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
     s.entity = null;
@@ -192,7 +196,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsMissingEntityName() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -216,7 +220,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsEmptyEntityName() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -240,7 +244,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsMissingPrimaryKey() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -262,7 +266,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsMissingPartitionKey() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -286,7 +290,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsEmptyPartitionKey() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -310,7 +314,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsMissingFields() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -330,7 +334,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsEmptyFields() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -350,7 +354,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsFieldWithMissingName() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -374,7 +378,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsFieldWithEmptyName() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -398,7 +402,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsFieldWithMissingType() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -422,7 +426,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsFieldWithEmptyType() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -446,7 +450,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsBadType() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -470,7 +474,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsDuplicateFieldNames() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -501,7 +505,7 @@ public class BprintValidatorTest {
   @Test
   void validatesAllSupportedFieldTypes() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -540,7 +544,7 @@ public class BprintValidatorTest {
   @Test
   void validatesEnumValues() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -570,7 +574,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsEmptyEnumValues() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -602,7 +606,7 @@ public class BprintValidatorTest {
   @Test
   void rejectsEnumWithEmptyString() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -634,7 +638,7 @@ public class BprintValidatorTest {
   @Test
   void validatesSortKey() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -657,7 +661,7 @@ public class BprintValidatorTest {
   @Test
   void validatesMultipleFields() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -691,7 +695,7 @@ public class BprintValidatorTest {
   @Test
   void validatesAnnotations() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -720,7 +724,7 @@ public class BprintValidatorTest {
   @Test
   void validatesNullAnnotations() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 
@@ -743,7 +747,7 @@ public class BprintValidatorTest {
   @Test
   void validatesFieldWithDefaultValue() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = "v1";
+    s.schemaVersion = 1.0;
     s.namespace = "acme.orders";
     s.description = "Basic order management system";
 

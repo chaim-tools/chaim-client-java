@@ -23,7 +23,7 @@ public class BprintSchemaTest {
     field = new BprintSchema.Field();
 
     // Setup valid schema
-    schema.schemaVersion = "v1";
+    schema.schemaVersion = 1.0;
     schema.namespace = "acme.orders";
     schema.description = "Basic order management system";
 
@@ -46,7 +46,7 @@ public class BprintSchemaTest {
   @Test
   void shouldCreateValidSchema() {
     assertThat(schema).isNotNull();
-    assertThat(schema.schemaVersion).isEqualTo("v1");
+    assertThat(schema.schemaVersion).isEqualTo(1.0);
     assertThat(schema.namespace).isEqualTo("acme.orders");
     assertThat(schema.description).isEqualTo("Basic order management system");
     assertThat(schema.entity).isNotNull();
@@ -93,35 +93,47 @@ public class BprintSchemaTest {
 
   @Test
   void shouldHandleEmptyStrings() {
-    schema.schemaVersion = "";
+    // schemaVersion is now Double, so test other string fields only
     schema.namespace = "";
     schema.description = "";
 
-    assertThat(schema.schemaVersion).isEmpty();
     assertThat(schema.namespace).isEmpty();
     assertThat(schema.description).isEmpty();
   }
 
   @Test
   void shouldHandleWhitespaceStrings() {
-    schema.schemaVersion = "  v1  ";
+    // schemaVersion is now Double, so test other string fields only
     schema.namespace = "  acme.orders  ";
     schema.description = "  Basic order management system  ";
 
-    assertThat(schema.schemaVersion).isEqualTo("  v1  ");
     assertThat(schema.namespace).isEqualTo("  acme.orders  ");
     assertThat(schema.description).isEqualTo("  Basic order management system  ");
   }
 
   @Test
   void shouldHandleSpecialCharacters() {
-    schema.schemaVersion = "v1.0-beta";
+    // schemaVersion is now Double
+    schema.schemaVersion = 1.5;
     schema.namespace = "acme.orders.v2";
     schema.description = "Order management system with special chars: @#$%^&*()";
 
-    assertThat(schema.schemaVersion).isEqualTo("v1.0-beta");
+    assertThat(schema.schemaVersion).isEqualTo(1.5);
     assertThat(schema.namespace).isEqualTo("acme.orders.v2");
     assertThat(schema.description).isEqualTo("Order management system with special chars: @#$%^&*()");
+  }
+
+  @Test
+  void shouldHandleSchemaVersionVariants() {
+    // Test different numeric versions
+    schema.schemaVersion = 2.0;
+    assertThat(schema.schemaVersion).isEqualTo(2.0);
+
+    schema.schemaVersion = 1.1;
+    assertThat(schema.schemaVersion).isEqualTo(1.1);
+
+    schema.schemaVersion = 0.5;
+    assertThat(schema.schemaVersion).isEqualTo(0.5);
   }
 
   @Test

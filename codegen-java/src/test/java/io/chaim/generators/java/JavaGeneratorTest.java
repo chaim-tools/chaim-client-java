@@ -24,7 +24,7 @@ public class JavaGeneratorTest {
     generator = new JavaGenerator();
 
     validSchema = new BprintSchema();
-    validSchema.schemaVersion = "v1";
+    validSchema.schemaVersion = 1.0;
     validSchema.namespace = "acme.orders";
     validSchema.description = "Basic order management system";
 
@@ -108,7 +108,7 @@ public class JavaGeneratorTest {
     Path file = out.resolve("com/example/model/Order.java");
     String content = Files.readString(file);
 
-    assertThat(content).contains("private final String chaimVersion = \"v1\"");
-    assertThat(content).contains("public String getChaimVersion()");
+    assertThat(content).contains("private final Double chaimVersion = 1.0");
+    assertThat(content).contains("public Double getChaimVersion()");
   }
 }
