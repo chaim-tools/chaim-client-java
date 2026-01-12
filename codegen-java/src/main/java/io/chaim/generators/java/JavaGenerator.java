@@ -11,12 +11,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Java code generator for single-table DynamoDB design.
+ * Java code generator for DynamoDB Enhanced Client.
+ * 
+ * Uses schema-defined primary keys directly - no invented fields.
+ * The partition key and sort key defined in the .bprint schema are
+ * annotated with @DynamoDbPartitionKey and @DynamoDbSortKey respectively.
  * 
  * Generates:
- * - Entity DTOs with pk/sk fields and DynamoDB Enhanced Client annotations
- * - Key composition helpers ({Entity}Keys.java)
- * - Entity-specific repositories with PK/SK-based operations
+ * - Entity DTOs with DynamoDB Enhanced Client annotations on schema-defined keys
+ * - Key constants helper ({Entity}Keys.java) with field name references
+ * - Entity-specific repositories with key-based operations
  * - Shared DI-friendly DynamoDB client (ChaimDynamoDbClient)
  * - Configuration with repository factory methods (ChaimConfig)
  */
@@ -52,7 +56,7 @@ public class JavaGenerator {
 
     /**
      * Generate code for multiple schemas sharing the same DynamoDB table.
-     * This is the primary API for single-table design support.
+     * This is the primary API for multi-entity table support.
      * 
      * @param schemas List of .bprint schemas for entities in this table
      * @param pkg Java package name for generated code
@@ -79,13 +83,13 @@ public class JavaGenerator {
         for (BprintSchema schema : schemas) {
             String entityName = deriveEntityName(schema);
             
-            // Generate entity DTO with pk/sk fields
+            // Generate entity DTO with schema-defined keys
             generateEntity(schema, entityName, pkg, outDir);
             
-            // Generate key composition helper
+            // Generate key constants helper
             generateEntityKeys(schema, entityName, pkg, outDir);
             
-            // Generate repository with PK/SK-based operations
+            // Generate repository with key-based operations
             if (tableMetadata != null) {
                 generateRepository(schema, entityName, pkg, outDir);
             }
@@ -111,9 +115,17 @@ public class JavaGenerator {
     }
 
     /**
-     * Generate entity DTO with pk/sk fields and DynamoDB/Lombok annotations.
+     * Generate entity DTO with schema-defined keys annotated for DynamoDB.
+     * 
+     * The partition key field from schema.entity.primaryKey.partitionKey gets @DynamoDbPartitionKey.
+     * The sort key field (if defined) from schema.entity.primaryKey.sortKey gets @DynamoDbSortKey.
+     * No extra pk/sk fields are invented - we use exactly what the schema defines.
      */
     private void generateEntity(BprintSchema schema, String entityName, String pkg, Path outDir) throws IOException {
+        String pkFieldName = schema.entity.primaryKey.partitionKey;
+        String skFieldName = schema.entity.primaryKey.sortKey;
+        boolean hasSortKey = skFieldName != null && !skFieldName.isEmpty();
+
         TypeSpec.Builder tb = TypeSpec.classBuilder(entityName)
             .addModifiers(Modifier.PUBLIC)
             // Lombok annotations
@@ -124,31 +136,33 @@ public class JavaGenerator {
             // DynamoDB annotation
             .addAnnotation(DYNAMO_DB_BEAN);
 
-        // DynamoDB key fields (always present for single-table design)
-        tb.addField(FieldSpec.builder(String.class, "pk", Modifier.PRIVATE).build());
-        tb.addField(FieldSpec.builder(String.class, "sk", Modifier.PRIVATE).build());
-
-        // Domain fields from schema
+        // Add all fields from schema
         for (BprintSchema.Field field : schema.entity.fields) {
             ClassName type = mapType(field.type);
             tb.addField(FieldSpec.builder(type, field.name, Modifier.PRIVATE).build());
         }
 
-        // Explicit getter for pk with @DynamoDbPartitionKey
-        tb.addMethod(MethodSpec.methodBuilder("getPk")
+        // Generate explicit getter for partition key with @DynamoDbPartitionKey
+        String pkGetterName = "get" + cap(pkFieldName);
+        ClassName pkType = findFieldType(schema, pkFieldName);
+        tb.addMethod(MethodSpec.methodBuilder(pkGetterName)
             .addModifiers(Modifier.PUBLIC)
             .addAnnotation(DYNAMO_DB_PARTITION_KEY)
-            .returns(String.class)
-            .addStatement("return pk")
+            .returns(pkType)
+            .addStatement("return $L", pkFieldName)
             .build());
 
-        // Explicit getter for sk with @DynamoDbSortKey
-        tb.addMethod(MethodSpec.methodBuilder("getSk")
-            .addModifiers(Modifier.PUBLIC)
-            .addAnnotation(DYNAMO_DB_SORT_KEY)
-            .returns(String.class)
-            .addStatement("return sk")
-            .build());
+        // Generate explicit getter for sort key with @DynamoDbSortKey (if defined)
+        if (hasSortKey) {
+            String skGetterName = "get" + cap(skFieldName);
+            ClassName skType = findFieldType(schema, skFieldName);
+            tb.addMethod(MethodSpec.methodBuilder(skGetterName)
+                .addModifiers(Modifier.PUBLIC)
+                .addAnnotation(DYNAMO_DB_SORT_KEY)
+                .returns(skType)
+                .addStatement("return $L", skFieldName)
+                .build());
+        }
 
         // All other getters/setters are generated by Lombok @Data
 
@@ -159,68 +173,82 @@ public class JavaGenerator {
     }
 
     /**
-     * Generate key composition helper for single-table design.
-     * Example: UserKeys.pk("user-123") -> "USER#user-123"
+     * Find the type of a field by name in the schema.
+     */
+    private ClassName findFieldType(BprintSchema schema, String fieldName) {
+        for (BprintSchema.Field field : schema.entity.fields) {
+            if (field.name.equals(fieldName)) {
+                return mapType(field.type);
+            }
+        }
+        // Default to String if not found (shouldn't happen with valid schemas)
+        return ClassName.get(String.class);
+    }
+
+    /**
+     * Generate key constants helper.
+     * 
+     * Provides constants for the partition key and sort key field names,
+     * plus a convenience method to build DynamoDB Key objects.
      */
     private void generateEntityKeys(BprintSchema schema, String entityName, String pkg, Path outDir) throws IOException {
         String keysClassName = entityName + "Keys";
-        String entityPrefix = entityName.toUpperCase() + "#";
         
-        // Determine the primary key field name from schema
         String pkFieldName = schema.entity.primaryKey.partitionKey;
         String skFieldName = schema.entity.primaryKey.sortKey;
-        boolean hasCompositeKey = skFieldName != null && !skFieldName.isEmpty();
-        
-        String defaultSk = hasCompositeKey ? entityName.toUpperCase() : "ITEM";
+        boolean hasSortKey = skFieldName != null && !skFieldName.isEmpty();
 
         TypeSpec.Builder tb = TypeSpec.classBuilder(keysClassName)
             .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
-            .addJavadoc("Key composition helpers for $L entity.\n", entityName)
-            .addJavadoc("Single-table pattern: PK = $L{$L}, SK = $L\n", entityPrefix, pkFieldName, defaultSk);
+            .addJavadoc("Key constants for $L entity.\n", entityName)
+            .addJavadoc("Partition key: $L\n", pkFieldName)
+            .addJavadoc(hasSortKey ? "Sort key: $L\n" : "No sort key defined.\n", skFieldName);
 
         // Private constructor (utility class)
         tb.addMethod(MethodSpec.constructorBuilder()
             .addModifiers(Modifier.PRIVATE)
             .build());
 
-        // ENTITY_PREFIX constant
-        tb.addField(FieldSpec.builder(String.class, "ENTITY_PREFIX", Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
-            .initializer("$S", entityPrefix)
+        // PARTITION_KEY_FIELD constant
+        tb.addField(FieldSpec.builder(String.class, "PARTITION_KEY_FIELD", Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
+            .initializer("$S", pkFieldName)
+            .addJavadoc("The field name used as partition key.\n")
             .build());
 
-        // DEFAULT_SK constant
-        tb.addField(FieldSpec.builder(String.class, "DEFAULT_SK", Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
-            .initializer("$S", defaultSk)
-            .build());
+        // SORT_KEY_FIELD constant (if defined)
+        if (hasSortKey) {
+            tb.addField(FieldSpec.builder(String.class, "SORT_KEY_FIELD", Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
+                .initializer("$S", skFieldName)
+                .addJavadoc("The field name used as sort key.\n")
+                .build());
+        }
 
-        // pk() method - compose partition key from domain identifier
-        tb.addMethod(MethodSpec.methodBuilder("pk")
-            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
-            .addJavadoc("Compose partition key from $L.\n", pkFieldName)
-            .addJavadoc("@return \"$L{$L}\"\n", entityPrefix, pkFieldName)
-            .addParameter(String.class, pkFieldName)
-            .returns(String.class)
-            .addStatement("return ENTITY_PREFIX + $L", pkFieldName)
-            .build());
-
-        // sk() method - default sort key
-        tb.addMethod(MethodSpec.methodBuilder("sk")
-            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
-            .addJavadoc("Default sort key for $L entity.\n", entityName)
-            .addJavadoc("@return \"$L\"\n", defaultSk)
-            .returns(String.class)
-            .addStatement("return DEFAULT_SK")
-            .build());
-
-        // key() method - build DynamoDB Key object
-        tb.addMethod(MethodSpec.methodBuilder("key")
-            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
-            .addJavadoc("Build a Key object for DynamoDB operations.\n")
-            .addParameter(String.class, pkFieldName)
-            .returns(KEY)
-            .addStatement("return $T.builder()\n.partitionValue(pk($L))\n.sortValue(sk())\n.build()", 
-                KEY, pkFieldName)
-            .build());
+        // key() method - build DynamoDB Key object from field values
+        if (hasSortKey) {
+            // With sort key
+            tb.addMethod(MethodSpec.methodBuilder("key")
+                .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+                .addJavadoc("Build a Key object for DynamoDB operations.\n")
+                .addJavadoc("@param $L partition key value\n", pkFieldName)
+                .addJavadoc("@param $L sort key value\n", skFieldName)
+                .addParameter(String.class, pkFieldName)
+                .addParameter(String.class, skFieldName)
+                .returns(KEY)
+                .addStatement("return $T.builder()\n.partitionValue($L)\n.sortValue($L)\n.build()", 
+                    KEY, pkFieldName, skFieldName)
+                .build());
+        } else {
+            // Without sort key
+            tb.addMethod(MethodSpec.methodBuilder("key")
+                .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+                .addJavadoc("Build a Key object for DynamoDB operations.\n")
+                .addJavadoc("@param $L partition key value\n", pkFieldName)
+                .addParameter(String.class, pkFieldName)
+                .returns(KEY)
+                .addStatement("return $T.builder()\n.partitionValue($L)\n.build()", 
+                    KEY, pkFieldName)
+                .build());
+        }
 
         JavaFile.builder(pkg + ".keys", tb.build())
             .skipJavaLangImports(true)
@@ -229,12 +257,16 @@ public class JavaGenerator {
     }
 
     /**
-     * Generate entity-specific repository with PK/SK-based operations.
+     * Generate entity-specific repository with key-based operations.
+     * 
+     * Uses the schema-defined partition key and sort key fields directly.
      * No scan() by default - only explicit access patterns.
      */
     private void generateRepository(BprintSchema schema, String entityName, String pkg, Path outDir) throws IOException {
         String repoClassName = entityName + "Repository";
         String pkFieldName = schema.entity.primaryKey.partitionKey;
+        String skFieldName = schema.entity.primaryKey.sortKey;
+        boolean hasSortKey = skFieldName != null && !skFieldName.isEmpty();
         
         ClassName entityClass = ClassName.get(pkg, entityName);
         ClassName keysClass = ClassName.get(pkg + ".keys", entityName + "Keys");
@@ -245,7 +277,9 @@ public class JavaGenerator {
 
         TypeSpec.Builder tb = TypeSpec.classBuilder(repoClassName)
             .addModifiers(Modifier.PUBLIC)
-            .addJavadoc("Repository for $L entity with PK/SK-based operations.\n", entityName)
+            .addJavadoc("Repository for $L entity with key-based operations.\n", entityName)
+            .addJavadoc("Partition key: $L\n", pkFieldName)
+            .addJavadoc(hasSortKey ? "Sort key: $L\n" : "No sort key.\n", skFieldName)
             .addJavadoc("No scan operations by default - use explicit access patterns.\n");
 
         // Table field
@@ -272,50 +306,53 @@ public class JavaGenerator {
         // save() method
         tb.addMethod(MethodSpec.methodBuilder("save")
             .addModifiers(Modifier.PUBLIC)
-            .addJavadoc("Save entity. Caller must set pk/sk before saving.\n")
+            .addJavadoc("Save entity to DynamoDB.\n")
             .addParameter(entityClass, "entity")
             .addStatement("table.putItem(entity)")
             .build());
 
-        // findByPkSk() method
-        tb.addMethod(MethodSpec.methodBuilder("findByPkSk")
-            .addModifiers(Modifier.PUBLIC)
-            .addJavadoc("Find by explicit PK and SK.\n")
-            .addParameter(String.class, "pk")
-            .addParameter(String.class, "sk")
-            .returns(optionalEntity)
-            .addStatement("$T key = $T.builder()\n.partitionValue(pk)\n.sortValue(sk)\n.build()", KEY, KEY)
-            .addStatement("return $T.ofNullable(table.getItem(key))", ClassName.get("java.util", "Optional"))
-            .build());
+        // findByKey() method - uses schema-defined keys
+        if (hasSortKey) {
+            // With sort key - need both PK and SK
+            tb.addMethod(MethodSpec.methodBuilder("findByKey")
+                .addModifiers(Modifier.PUBLIC)
+                .addJavadoc("Find entity by partition key and sort key.\n")
+                .addParameter(String.class, pkFieldName)
+                .addParameter(String.class, skFieldName)
+                .returns(optionalEntity)
+                .addStatement("$T key = $T.key($L, $L)", KEY, keysClass, pkFieldName, skFieldName)
+                .addStatement("return $T.ofNullable(table.getItem(key))", ClassName.get("java.util", "Optional"))
+                .build());
 
-        // findBy{PkFieldName}() convenience method
-        String findByIdMethodName = "findBy" + cap(pkFieldName);
-        tb.addMethod(MethodSpec.methodBuilder(findByIdMethodName)
-            .addModifiers(Modifier.PUBLIC)
-            .addJavadoc("Convenience: Find by $L (composes key internally).\n", pkFieldName)
-            .addParameter(String.class, pkFieldName)
-            .returns(optionalEntity)
-            .addStatement("return findByPkSk($T.pk($L), $T.sk())", keysClass, pkFieldName, keysClass)
-            .build());
+            // deleteByKey() method
+            tb.addMethod(MethodSpec.methodBuilder("deleteByKey")
+                .addModifiers(Modifier.PUBLIC)
+                .addJavadoc("Delete entity by partition key and sort key.\n")
+                .addParameter(String.class, pkFieldName)
+                .addParameter(String.class, skFieldName)
+                .addStatement("$T key = $T.key($L, $L)", KEY, keysClass, pkFieldName, skFieldName)
+                .addStatement("table.deleteItem(key)")
+                .build());
+        } else {
+            // Without sort key - just PK
+            tb.addMethod(MethodSpec.methodBuilder("findByKey")
+                .addModifiers(Modifier.PUBLIC)
+                .addJavadoc("Find entity by partition key.\n")
+                .addParameter(String.class, pkFieldName)
+                .returns(optionalEntity)
+                .addStatement("$T key = $T.key($L)", KEY, keysClass, pkFieldName)
+                .addStatement("return $T.ofNullable(table.getItem(key))", ClassName.get("java.util", "Optional"))
+                .build());
 
-        // deleteByPkSk() method
-        tb.addMethod(MethodSpec.methodBuilder("deleteByPkSk")
-            .addModifiers(Modifier.PUBLIC)
-            .addJavadoc("Delete by explicit PK and SK.\n")
-            .addParameter(String.class, "pk")
-            .addParameter(String.class, "sk")
-            .addStatement("$T key = $T.builder()\n.partitionValue(pk)\n.sortValue(sk)\n.build()", KEY, KEY)
-            .addStatement("table.deleteItem(key)")
-            .build());
-
-        // deleteBy{PkFieldName}() convenience method
-        String deleteByIdMethodName = "deleteBy" + cap(pkFieldName);
-        tb.addMethod(MethodSpec.methodBuilder(deleteByIdMethodName)
-            .addModifiers(Modifier.PUBLIC)
-            .addJavadoc("Convenience: Delete by $L.\n", pkFieldName)
-            .addParameter(String.class, pkFieldName)
-            .addStatement("deleteByPkSk($T.pk($L), $T.sk())", keysClass, pkFieldName, keysClass)
-            .build());
+            // deleteByKey() method
+            tb.addMethod(MethodSpec.methodBuilder("deleteByKey")
+                .addModifiers(Modifier.PUBLIC)
+                .addJavadoc("Delete entity by partition key.\n")
+                .addParameter(String.class, pkFieldName)
+                .addStatement("$T key = $T.key($L)", KEY, keysClass, pkFieldName)
+                .addStatement("table.deleteItem(key)")
+                .build());
+        }
 
         // NOTE: No findAll() or scan() generated by default
 

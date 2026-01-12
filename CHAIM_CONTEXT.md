@@ -22,18 +22,79 @@ It is an **internal dependency** of `chaim-cli` — end users should not invoke 
 **Data flow**:
 ```
 .bprint file → chaim-cdk → OS cache snapshot → chaim-cli → chaim-client-java → .java files
-                                                   ↑
-                                            user runs this
+     ↑             ↑                               ↑
+user defines   user deploys                   user generates
 ```
 
 > **Note**: This package does not read `.bprint` files or OS cache snapshots directly. It receives parsed schema JSON from `chaim-cli`.
 
 **Primary outputs**:
-- Entity DTOs with DynamoDB Enhanced Client annotations (`@DynamoDbBean`, `@DynamoDbPartitionKey`, `@DynamoDbSortKey`)
-- Key composition helpers (`{Entity}Keys.java`)
-- Repository classes with PK/SK-based CRUD operations
+- Entity DTOs with DynamoDB Enhanced Client annotations on **schema-defined keys**
+- Key constants helpers (`{Entity}Keys.java`)
+- Repository classes with key-based CRUD operations
 - DI-friendly DynamoDB client wrapper (`ChaimDynamoDbClient.java`)
 - Configuration with repository factory methods (`ChaimConfig.java`)
+
+---
+
+## Schema-Driven Keys (Core Design)
+
+**The generator uses exactly what you define in your schema — no invented fields.**
+
+When you define your `.bprint` schema:
+```json
+{
+  "entity": {
+    "name": "User",
+    "primaryKey": {
+      "partitionKey": "userId",    // ← This field gets @DynamoDbPartitionKey
+      "sortKey": "entityType"       // ← This field gets @DynamoDbSortKey
+    },
+    "fields": [
+      { "name": "userId", "type": "string" },
+      { "name": "entityType", "type": "string" },
+      { "name": "email", "type": "string" }
+    ]
+  }
+}
+```
+
+The generator annotates **your fields** with DynamoDB annotations:
+```java
+@DynamoDbBean
+public class User {
+    private String userId;      // Your partition key
+    private String entityType;  // Your sort key
+    private String email;
+
+    @DynamoDbPartitionKey
+    public String getUserId() { return userId; }
+
+    @DynamoDbSortKey
+    public String getEntityType() { return entityType; }
+}
+```
+
+**Benefits**:
+- ✅ **Drop-in replacement** — Generated code matches existing table structure
+- ✅ **Data migration friendly** — No key transformation needed
+- ✅ **Schema is truth** — Single source of truth for key structure
+- ✅ **Existing data compatible** — Works with tables that already have data
+
+---
+
+## Multi-Entity Table Support
+
+Multiple entities can share the same DynamoDB table if they have **matching PK/SK field names**:
+
+```
+Table: DataTable (PK: userId, SK: entityType)
+├── User   → primaryKey: { partitionKey: "userId", sortKey: "entityType" } ✅
+├── Order  → primaryKey: { partitionKey: "userId", sortKey: "entityType" } ✅
+└── Product → primaryKey: { partitionKey: "productId", sortKey: "category" } ❌ ERROR!
+```
+
+**Validation**: chaim-cli validates that all entities bound to the same table have matching PK/SK field names before generation.
 
 ---
 
@@ -41,36 +102,19 @@ It is an **internal dependency** of `chaim-cli` — end users should not invoke 
 
 **Runtime flow**:
 1. chaim-cli groups snapshots by physical table (using `tableArn` or composite key)
-2. chaim-cli calls `JavaGenerator.generateForTable()` with all schemas for a table
-3. The TypeScript wrapper spawns `java -jar` with schemas and metadata as JSON
-4. The Java generator parses JSON and writes Java files to the output directory
+2. chaim-cli validates PK/SK consistency across all entities for each table
+3. chaim-cli calls `JavaGenerator.generateForTable()` with all schemas for a table
+4. The TypeScript wrapper spawns `java -jar` with schemas and metadata as JSON
+5. The Java generator parses JSON and writes Java files to the output directory
 
 ```mermaid
 flowchart LR
-    CLI["chaim-cli (Node.js)<br/>groups by table<br/>calls generateForTable()"]
+    CLI["chaim-cli (Node.js)<br/>groups by table<br/>validates PK/SK<br/>calls generateForTable()"]
     TS["TypeScript wrapper<br/>resolves JAR path<br/>spawns java process"]
     JAR["Java generator JAR<br/>parses schema JSON<br/>generates .java files"]
     OUT["Generated .java files<br/>per entity + shared infra"]
 
     CLI --> TS --> JAR --> OUT
-```
-
----
-
-## Single-Table Design Support
-
-The generator natively supports DynamoDB single-table design:
-
-1. **Multiple entities per table**: Multiple `.bprint` schemas can bind to the same DynamoDB table
-2. **Entity-prefixed keys**: Generated `pk`/`sk` fields use entity prefixes (e.g., `USER#`, `ORDER#`)
-3. **Shared infrastructure once**: `ChaimDynamoDbClient` and `ChaimConfig` are generated once per table
-4. **Per-entity artifacts**: Entity DTOs, Keys helpers, and Repositories are generated for each schema
-
-```
-Table: DataTable
-├── User (pk: "USER#{userId}", sk: "USER")
-├── Order (pk: "ORDER#{orderId}", sk: "ORDER")
-└── Product (pk: "PRODUCT#{productId}", sk: "PRODUCT")
 ```
 
 ---
@@ -90,7 +134,7 @@ Table: DataTable
 
 ## CLI interface
 
-Java is invoked with **multiple schemas** (single-table design):
+Java is invoked with **multiple schemas**:
 
 ```bash
 # Inline JSON array
@@ -166,7 +210,7 @@ chaim-client-java/
 ### codegen-java
 
 **Responsibilities**:
-- Parse command-line args (single or multiple schemas)
+- Parse command-line args
 - Parse schema and metadata JSON payloads
 - Generate Java source files via JavaPoet
 
@@ -184,14 +228,14 @@ Example: `--package com.example.model` with User and Order schemas
 
 ```
 com/example/model/
-├── User.java                      # Entity DTO with pk/sk
-├── Order.java                     # Entity DTO with pk/sk
+├── User.java                      # Entity DTO with schema-defined keys
+├── Order.java                     # Entity DTO with schema-defined keys
 ├── keys/
-│   ├── UserKeys.java              # Key composition helpers
-│   └── OrderKeys.java             # Key composition helpers
+│   ├── UserKeys.java              # Key constants and helpers
+│   └── OrderKeys.java             # Key constants and helpers
 ├── repository/
-│   ├── UserRepository.java        # PK/SK-based CRUD
-│   └── OrderRepository.java       # PK/SK-based CRUD
+│   ├── UserRepository.java        # Key-based CRUD
+│   └── OrderRepository.java       # Key-based CRUD
 ├── client/
 │   └── ChaimDynamoDbClient.java   # DI-friendly client wrapper
 └── config/
@@ -204,6 +248,8 @@ com/example/model/
 
 ### Entity DTO (`User.java`)
 
+Uses **schema-defined keys** — no invented `pk`/`sk` fields:
+
 ```java
 @Data
 @Builder
@@ -211,44 +257,39 @@ com/example/model/
 @AllArgsConstructor
 @DynamoDbBean
 public class User {
-    private String pk;    // Partition key (e.g., "USER#user-123")
-    private String sk;    // Sort key (e.g., "USER")
-    private String userId;
+    private String userId;      // Schema-defined partition key
+    private String entityType;  // Schema-defined sort key (if present)
     private String email;
 
     @DynamoDbPartitionKey
-    public String getPk() { return pk; }
+    public String getUserId() { return userId; }
 
     @DynamoDbSortKey
-    public String getSk() { return sk; }
+    public String getEntityType() { return entityType; }
 }
 ```
 
-### Key Helpers (`UserKeys.java`)
+### Key Constants (`UserKeys.java`)
+
+Provides constants for key field names and a convenience method:
 
 ```java
 public final class UserKeys {
-    public static final String ENTITY_PREFIX = "USER#";
-    public static final String DEFAULT_SK = "USER";
+    public static final String PARTITION_KEY_FIELD = "userId";
+    public static final String SORT_KEY_FIELD = "entityType";  // If sort key defined
 
-    public static String pk(String userId) {
-        return ENTITY_PREFIX + userId;
-    }
-
-    public static String sk() {
-        return DEFAULT_SK;
-    }
-
-    public static Key key(String userId) {
+    public static Key key(String userId, String entityType) {
         return Key.builder()
-            .partitionValue(pk(userId))
-            .sortValue(sk())
+            .partitionValue(userId)
+            .sortValue(entityType)
             .build();
     }
 }
 ```
 
 ### Repository (`UserRepository.java`)
+
+Uses schema-defined key parameters directly:
 
 ```java
 public class UserRepository {
@@ -261,10 +302,8 @@ public class UserRepository {
     public UserRepository(DynamoDbEnhancedClient enhancedClient, String tableName) { ... }
 
     public void save(User entity) { ... }
-    public Optional<User> findByPkSk(String pk, String sk) { ... }
-    public Optional<User> findByUserId(String userId) { ... }  // Convenience
-    public void deleteByPkSk(String pk, String sk) { ... }
-    public void deleteByUserId(String userId) { ... }  // Convenience
+    public Optional<User> findByKey(String userId, String entityType) { ... }
+    public void deleteByKey(String userId, String entityType) { ... }
     // NOTE: No findAll() or scan() - intentionally omitted
 }
 ```
@@ -327,8 +366,8 @@ public class ChaimConfig {
 | Annotation | Source | Purpose |
 |------------|--------|---------|
 | `@DynamoDbBean` | AWS SDK | Marks class as DynamoDB entity |
-| `@DynamoDbPartitionKey` | AWS SDK | Marks partition key getter |
-| `@DynamoDbSortKey` | AWS SDK | Marks sort key getter |
+| `@DynamoDbPartitionKey` | AWS SDK | Marks partition key getter (on schema-defined field) |
+| `@DynamoDbSortKey` | AWS SDK | Marks sort key getter (on schema-defined field) |
 | `@Data` | Lombok | Generates getters, setters, equals, hashCode, toString |
 | `@Builder` | Lombok | Generates builder pattern |
 | `@NoArgsConstructor` | Lombok | Generates no-args constructor |
@@ -429,7 +468,7 @@ await generator.generateForTable(
 | Add a new generated file | `codegen-java/.../JavaGenerator.java` (add new generate method) |
 | Add new table metadata fields | `cdk-integration/.../TableMetadata.java` and `codegen-java/.../Main.java` (parseTableMetadata) |
 | Change CLI argument parsing | `codegen-java/.../Main.java` |
-| Change key composition logic | `codegen-java/.../JavaGenerator.java` (generateEntityKeys) |
+| Change key helper logic | `codegen-java/.../JavaGenerator.java` (generateEntityKeys) |
 | Change client builder | `codegen-java/.../JavaGenerator.java` (generateChaimDynamoDbClient) |
 
 ---
@@ -440,8 +479,9 @@ This package does **not**:
 - Deploy AWS resources (that's chaim-cdk)
 - Validate cloud account permissions
 - Parse bprint from disk — it receives schema JSON from chaim-cli
-- Generate code for languages other than Java
+- Generate code for languages other than Java (v1 DynamoDBMapper support planned)
 - Generate `scan()` or `findAll()` methods (NoSQL anti-pattern)
+- Invent `pk`/`sk` fields — uses schema-defined keys only
 
 ---
 
