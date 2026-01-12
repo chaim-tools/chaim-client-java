@@ -29,7 +29,7 @@ user defines   user deploys                   user generates
 
 ## Schema-Driven Keys
 
-**The generator uses exactly what you define — no invented `pk`/`sk` fields.**
+**The generator uses exactly what you define.**
 
 Your schema:
 ```json
@@ -39,7 +39,11 @@ Your schema:
       "partitionKey": "userId",
       "sortKey": "entityType"
     },
-    "fields": [...]
+    "fields": [
+      { "name": "userId", "type": "string" },
+      { "name": "entityType", "type": "string" },
+      ...
+    ]
   }
 }
 ```
@@ -122,64 +126,6 @@ The CLI:
 3. **Validates PK/SK consistency** across all entities for each table
 4. Invokes chaim-client-java with all schemas for each table
 5. Writes generated `.java` files to the output directory
-
----
-
-### Direct Invocation (Development/Testing Only)
-
-The following methods are for package maintainers and local testing only.
-
-#### As Node.js Module (Internal)
-
-```typescript
-import { JavaGenerator } from '@chaim-tools/client-java';
-
-const generator = new JavaGenerator();
-
-await generator.generateForTable(
-  [userSchema, orderSchema],  // Array of schema objects
-  'com.example.model',        // Java package name
-  './src/main/java',          // Output directory
-  tableMetadata               // { tableName, tableArn, region }
-);
-```
-
-#### As Java Library (Testing)
-
-```java
-import io.chaim.generators.java.JavaGenerator;
-import io.chaim.generators.java.TableMetadata;
-import io.chaim.core.model.BprintSchema;
-import java.nio.file.Path;
-import java.util.List;
-
-JavaGenerator generator = new JavaGenerator();
-
-generator.generateForTable(
-    List.of(userSchema, orderSchema),
-    "com.example.model",
-    Path.of("src/main/java"),
-    tableMetadata
-);
-```
-
-#### As CLI (Testing)
-
-```bash
-# Multiple schemas
-java -jar codegen-java.jar \
-  --schemas '[{"schemaVersion":"v1",...},{"schemaVersion":"v1",...}]' \
-  --package com.example.model \
-  --output ./src/main/java \
-  --table-metadata '{"tableName":"DataTable","tableArn":"arn:..."}'
-
-# File-based for large payloads
-java -jar codegen-java.jar \
-  --schemas-file /tmp/schemas.json \
-  --package com.example.model \
-  --output ./src/main/java \
-  --table-metadata '{"tableName":"DataTable",...}'
-```
 
 ## Generated Output
 
