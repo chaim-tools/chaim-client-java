@@ -14,7 +14,8 @@ allprojects {
 
 java {
   toolchain {
-    languageVersion.set(JavaLanguageVersion.of(17))
+    languageVersion.set(JavaLanguageVersion.of(22))
+    vendor.set(JvmVendorSpec.ORACLE)
   }
 }
 
@@ -24,13 +25,14 @@ subprojects {
 
   java {
     toolchain {
-      languageVersion.set(JavaLanguageVersion.of(17))
+      languageVersion.set(JavaLanguageVersion.of(22))
+      vendor.set(JvmVendorSpec.ORACLE)
     }
   }
 
   tasks.withType<JavaCompile>().configureEach {
     options.encoding = "UTF-8"
-    options.release.set(17)
+    options.release.set(22)
   }
 
   dependencies {
