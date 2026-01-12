@@ -1,4 +1,4 @@
-package io.chaim.core;
+package co.chaim.core;
 
 public enum FieldType {
   string, number, bool, timestamp;

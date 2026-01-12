@@ -1,4 +1,4 @@
-package io.chaim.generators.java;
+package co.chaim.generators.java;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;

@@ -1,4 +1,4 @@
-package io.chaim.core.model;
+package co.chaim.core.model;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;

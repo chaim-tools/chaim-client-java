@@ -1,7 +1,7 @@
-package io.chaim.generators.java;
+package co.chaim.generators.java;
 
 import com.squareup.javapoet.*;
-import io.chaim.core.model.BprintSchema;
+import co.chaim.core.model.BprintSchema;
 
 import javax.lang.model.element.Modifier;
 import java.io.IOException;

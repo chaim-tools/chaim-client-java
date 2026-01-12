@@ -1,6 +1,6 @@
-package io.chaim.core;
+package co.chaim.core;
 
-import io.chaim.core.model.BprintSchema;
+import co.chaim.core.model.BprintSchema;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.*;

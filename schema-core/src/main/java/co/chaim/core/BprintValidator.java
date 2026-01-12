@@ -1,6 +1,6 @@
-package io.chaim.core;
+package co.chaim.core;
 
-import io.chaim.core.model.BprintSchema;
+import co.chaim.core.model.BprintSchema;
 
 import java.util.HashSet;
 import java.util.Set;

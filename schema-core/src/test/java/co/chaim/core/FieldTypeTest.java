@@ -1,4 +1,4 @@
-package io.chaim.core;
+package co.chaim.core;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;

@@ -4,7 +4,7 @@ plugins {
 }
 
 allprojects {
-  group = "io.chaim"
+  group = "co.chaim"
   version = "0.1.0"
 
   repositories {

@@ -1,7 +1,7 @@
-package io.chaim.core;
+package co.chaim.core;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.chaim.core.model.BprintSchema;
+import co.chaim.core.model.BprintSchema;
 
 import java.io.IOException;
 import java.nio.file.Files;

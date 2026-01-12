@@ -1,6 +1,6 @@
-package io.chaim.generators.java;
+package co.chaim.generators.java;
 
-import io.chaim.core.model.BprintSchema;
+import co.chaim.core.model.BprintSchema;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 

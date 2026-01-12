@@ -1,4 +1,4 @@
-package io.chaim.core.model;
+package co.chaim.core.model;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
