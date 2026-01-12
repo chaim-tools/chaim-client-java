@@ -293,6 +293,81 @@ public class UserRepository {
 }
 ```
 
+---
+
+## DynamoDB Operations Matrix
+
+This matrix shows which DynamoDB operations are available in the generated repository and their current status.
+
+### Repository CRUD Operations
+
+| Operation | Method | Status | Description |
+|-----------|--------|--------|-------------|
+| **Create** | `save(entity)` | ✅ Available | Insert or replace item (PutItem) |
+| **Read (by key)** | `findByKey(pk, sk)` | ✅ Available | Get single item by primary key |
+| **Update** | `save(entity)` | ✅ Available | Full item replacement (PutItem) |
+| **Delete** | `deleteByKey(pk, sk)` | ✅ Available | Remove item by primary key |
+
+### Query & Scan Operations
+
+| Operation | Method | Status | Description |
+|-----------|--------|--------|-------------|
+| **Scan** | `findAll()` | ❌ Not Available | Full table scan — intentionally omitted (NoSQL anti-pattern) |
+| **Query (by PK)** | `queryByPartitionKey()` | 🔜 Backlog | Query all items with same partition key |
+| **Query (with SK condition)** | `queryByPartitionKeyAndSortKeyBeginsWith()` | 🔜 Backlog | Query with sort key prefix |
+| **Query (GSI)** | `queryByGsi()` | 🔜 Backlog | Query using Global Secondary Index |
+| **Query (LSI)** | `queryByLsi()` | 🔜 Backlog | Query using Local Secondary Index |
+
+### Batch Operations
+
+| Operation | Method | Status | Description |
+|-----------|--------|--------|-------------|
+| **Batch Write** | `saveAll(entities)` | 🔜 Backlog | Batch put multiple items |
+| **Batch Get** | `findAllByKeys(keys)` | 🔜 Backlog | Batch get multiple items by keys |
+| **Batch Delete** | `deleteAllByKeys(keys)` | 🔜 Backlog | Batch delete multiple items |
+
+### Conditional & Transactional Operations
+
+| Operation | Method | Status | Description |
+|-----------|--------|--------|-------------|
+| **Conditional Put** | `saveIfNotExists(entity)` | 🔜 Backlog | Put only if item doesn't exist |
+| **Conditional Update** | `updateWithCondition()` | 🔜 Backlog | Update with condition expression |
+| **Transact Write** | `transactSave(entities)` | 🔜 Backlog | ACID transaction across items |
+| **Transact Get** | `transactFind(keys)` | 🔜 Backlog | Consistent read across items |
+
+### Partial Update Operations
+
+| Operation | Method | Status | Description |
+|-----------|--------|--------|-------------|
+| **Update Attribute** | `updateAttribute(pk, sk, attr, value)` | 🔜 Backlog | Update single attribute |
+| **Increment Counter** | `incrementCounter(pk, sk, attr, delta)` | 🔜 Backlog | Atomic counter increment |
+| **Append to List** | `appendToList(pk, sk, attr, values)` | 🔜 Backlog | Append values to list attribute |
+
+### Status Legend
+
+| Symbol | Meaning |
+|--------|---------|
+| ✅ | Available — generated and ready to use |
+| 🔜 | Backlog — planned for future release |
+| ❌ | Not Available — intentionally omitted |
+
+### Design Decisions
+
+**Why no `scan()` / `findAll()`?**
+
+Full table scans are intentionally omitted because:
+1. **Cost** — Scans read every item, incurring high read capacity costs
+2. **Performance** — Scans don't scale; response time grows with table size
+3. **Best Practice** — NoSQL requires explicit access patterns, not ad-hoc queries
+
+If you need all items, define a GSI with a known partition key pattern (e.g., `GSI1PK = "ENTITY#User"`) and use `queryByGsi()` when available.
+
+**Why PutItem instead of UpdateItem for save()?**
+
+The current `save()` uses `PutItem` which replaces the entire item. This is simpler and covers most use cases. Partial updates via `UpdateItem` are on the backlog for scenarios where you need to update specific attributes without fetching the full item first.
+
+---
+
 ### DI-Friendly Client (`ChaimDynamoDbClient.java`)
 
 ```java
