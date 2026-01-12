@@ -39,8 +39,6 @@ user defines   user deploys                   user generates
 
 ## Schema-Driven Keys (Core Design)
 
-**The generator uses exactly what you define in your schema — no invented fields.**
-
 When you define your `.bprint` schema:
 ```json
 {
@@ -169,8 +167,7 @@ java -jar codegen-java.jar \
 ```
 chaim-client-java/
 ├── schema-core/          # Schema loading and validation
-├── cdk-integration/      # AWS metadata containers and readers
-├── codegen-java/         # Java generator engine
+├── codegen-java/         # Java generator engine (includes TableMetadata)
 ├── src/                  # TypeScript wrapper source
 └── dist/                 # Compiled TypeScript and bundled JARs
 ```
@@ -194,19 +191,6 @@ chaim-client-java/
 | `FieldType` | Maps bprint types to Java types |
 | `BprintSchema` | Jackson model for schema |
 
-### cdk-integration
-
-**Responsibilities**:
-- Represent and read deployment metadata
-- Provide table metadata used by codegen
-
-**Key classes**:
-| Class | Purpose |
-|-------|---------|
-| `TableMetadata` | DynamoDB metadata container |
-| `CloudFormationReader` | Reads stack outputs |
-| `ChaimStackOutputs` | Output container |
-
 ### codegen-java
 
 **Responsibilities**:
@@ -219,6 +203,7 @@ chaim-client-java/
 |-------|---------|
 | `Main` | Entry point for `java -jar` |
 | `JavaGenerator` | Generates DTOs, keys, repositories, client, config |
+| `TableMetadata` | Simple record for table metadata (tableName, tableArn, region) |
 
 ---
 
@@ -443,7 +428,7 @@ await generator.generateForTable(
 | Change arg parsing | `codegen-java/.../Main.java` |
 | Change code generation | `codegen-java/.../JavaGenerator.java` |
 | Change schema model | `schema-core/.../BprintSchema.java` |
-| Change table metadata shape | `cdk-integration/.../TableMetadata.java` |
+| Change table metadata shape | `codegen-java/.../TableMetadata.java` |
 
 ---
 
@@ -466,7 +451,7 @@ await generator.generateForTable(
 | Add a new bprint field type | `schema-core/.../FieldType.java` and `codegen-java/.../JavaGenerator.java` (mapType) |
 | Change repository methods | `codegen-java/.../JavaGenerator.java` (generateRepository) |
 | Add a new generated file | `codegen-java/.../JavaGenerator.java` (add new generate method) |
-| Add new table metadata fields | `cdk-integration/.../TableMetadata.java` and `codegen-java/.../Main.java` (parseTableMetadata) |
+| Add new table metadata fields | `codegen-java/.../TableMetadata.java` |
 | Change CLI argument parsing | `codegen-java/.../Main.java` |
 | Change key helper logic | `codegen-java/.../JavaGenerator.java` (generateEntityKeys) |
 | Change client builder | `codegen-java/.../JavaGenerator.java` (generateChaimDynamoDbClient) |

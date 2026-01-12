@@ -96,8 +96,7 @@ npm run build
 ```
 chaim-client-java/
 ├── schema-core/           # Core schema handling (BprintLoader, Validator)
-├── cdk-integration/       # AWS CDK/CloudFormation integration
-├── codegen-java/          # Code generation engine (JavaPoet)
+├── codegen-java/          # Code generation engine (JavaPoet, TableMetadata)
 ├── src/
 │   └── index.ts           # TypeScript wrapper
 ├── dist/                  # Compiled output
@@ -149,8 +148,8 @@ await generator.generateForTable(
 
 ```java
 import io.chaim.generators.java.JavaGenerator;
+import io.chaim.generators.java.TableMetadata;
 import io.chaim.core.model.BprintSchema;
-import io.chaim.cdk.TableMetadata;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -356,18 +355,12 @@ Core schema handling:
 - `BprintSchema` - Java model with Jackson annotations
 - `FieldType` - Type mapping utilities
 
-### cdk-integration
-
-AWS integration:
-- `TableMetadata` - DynamoDB table metadata container
-- `CloudFormationReader` - Read CFN stack outputs
-- `ChaimStackOutputs` - Stack output container
-
 ### codegen-java
 
 Code generation:
 - `Main` - CLI entry point (supports `--schemas`, `--schemas-file`)
 - `JavaGenerator` - JavaPoet-based code generator with schema-driven keys
+- `TableMetadata` - Simple record for table metadata (passed from CLI)
 
 ## npm Packaging
 

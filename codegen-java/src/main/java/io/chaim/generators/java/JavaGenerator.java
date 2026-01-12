@@ -2,7 +2,6 @@ package io.chaim.generators.java;
 
 import com.squareup.javapoet.*;
 import io.chaim.core.model.BprintSchema;
-import io.chaim.cdk.TableMetadata;
 
 import javax.lang.model.element.Modifier;
 import java.io.IOException;
@@ -527,15 +526,15 @@ public class JavaGenerator {
 
         // Constants from CDK metadata
         tb.addField(FieldSpec.builder(String.class, "TABLE_NAME", Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
-            .initializer("$S", tableMetadata.getTableName())
+            .initializer("$S", tableMetadata.tableName())
             .build());
 
         tb.addField(FieldSpec.builder(String.class, "TABLE_ARN", Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
-            .initializer("$S", tableMetadata.getTableArn())
+            .initializer("$S", tableMetadata.tableArn())
             .build());
 
         tb.addField(FieldSpec.builder(String.class, "REGION", Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
-            .initializer("$S", tableMetadata.getRegion())
+            .initializer("$S", tableMetadata.region())
             .build());
 
         // Shared client field (volatile for thread-safety)

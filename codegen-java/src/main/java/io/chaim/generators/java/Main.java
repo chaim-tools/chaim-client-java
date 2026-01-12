@@ -1,8 +1,6 @@
 package io.chaim.generators.java;
 
 import io.chaim.core.model.BprintSchema;
-import io.chaim.cdk.TableMetadata;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 
@@ -104,14 +102,8 @@ public class Main {
     }
     
     private static TableMetadata parseTableMetadata(String json) throws Exception {
-        JsonNode node = MAPPER.readTree(json);
-        
-        String tableName = node.has("tableName") ? node.get("tableName").asText() : null;
-        String tableArn = node.has("tableArn") ? node.get("tableArn").asText() : null;
-        String region = node.has("region") ? node.get("region").asText() : null;
-        
-        // TableMetadata constructor requires schemaData as JsonNode, we can pass null or the node itself
-        return new TableMetadata(tableName, tableArn, region, node);
+        // Simply deserialize the JSON directly to TableMetadata record
+        return MAPPER.readValue(json, TableMetadata.class);
     }
     
     /**

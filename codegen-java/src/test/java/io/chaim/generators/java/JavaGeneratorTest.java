@@ -1,9 +1,6 @@
 package io.chaim.generators.java;
 
 import io.chaim.core.model.BprintSchema;
-import io.chaim.cdk.TableMetadata;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.io.TempDir;
@@ -24,7 +21,6 @@ public class JavaGeneratorTest {
   private BprintSchema userWithSortKeySchema;
   private TableMetadata tableMetadata;
   private JavaGenerator generator;
-  private static final ObjectMapper MAPPER = new ObjectMapper();
 
   @BeforeEach
   void setUp() {
@@ -117,13 +113,11 @@ public class JavaGeneratorTest {
     orderEntity.fields = List.of(orderUserIdField, orderEntityTypeField, amountField);
     orderSchema.entity = orderEntity;
 
-    // Create table metadata
-    ObjectNode schemaNode = MAPPER.createObjectNode();
+    // Create table metadata (simple record with just table info)
     tableMetadata = new TableMetadata(
         "DataTable",
         "arn:aws:dynamodb:us-east-1:123456789012:table/DataTable",
-        "us-east-1",
-        schemaNode
+        "us-east-1"
     );
   }
 
