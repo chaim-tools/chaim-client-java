@@ -108,19 +108,11 @@ public class Main {
     
     /**
      * Derive entity name from schema.
-     * Priority: entity.name > last part of namespace (capitalized) > "Entity"
+     * Uses entityName field directly, or defaults to "Entity".
      */
     private static String deriveEntityName(BprintSchema schema) {
-        // First try entity.name
-        if (schema.entity != null && schema.entity.name != null && !schema.entity.name.isEmpty()) {
-            return schema.entity.name;
-        }
-        
-        // Then try deriving from namespace (e.g., "example.users" -> "Users")
-        if (schema.namespace != null && !schema.namespace.isEmpty()) {
-            String[] parts = schema.namespace.split("\\.");
-            String lastPart = parts[parts.length - 1];
-            return lastPart.substring(0, 1).toUpperCase() + lastPart.substring(1);
+        if (schema.entityName != null && !schema.entityName.isEmpty()) {
+            return schema.entityName;
         }
         
         return "Entity";

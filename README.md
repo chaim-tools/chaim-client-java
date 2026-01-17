@@ -253,10 +253,12 @@ chaim-cli validates this before generation.
 
 ## Entity Name Derivation
 
-When `entity.name` is not in the schema, the generator derives it from `namespace`:
+The generator uses the `entityName` field directly from schema v1.1:
 
-- `"namespace": "example.users"` → Class name: `Users`
-- `"namespace": "com.acme.orders"` → Class name: `Orders`
+- `"entityName": "User"` → Class name: `User`
+- `"entityName": "Order"` → Class name: `Order`
+
+If `entityName` is not provided, the generator defaults to `"Entity"`.
 
 ## Building
 

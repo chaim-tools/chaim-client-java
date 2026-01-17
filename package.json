@@ -42,6 +42,7 @@
   },
   "homepage": "https://github.com/chaim-tools/chaim-client-java#readme",
   "dependencies": {
+    "@chaim-tools/chaim-bprint-spec": "workspace:^0.2.0",
     "chalk": "^4.1.2"
   },
   "devDependencies": {

@@ -8,18 +8,11 @@ import java.util.Objects;
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class BprintSchema {
   public Double schemaVersion;
-  public String namespace;
+  public String entityName;
   public String description;
-  public Entity entity;
-
-  @JsonIgnoreProperties(ignoreUnknown = true)
-  public static class Entity {
-    public String name;
-    public PrimaryKey primaryKey;
-    public List<Field> fields;
-    public String description;
-    public Annotations annotations;
-  }
+  public PrimaryKey primaryKey;
+  public List<Field> fields;
+  public Annotations annotations;
 
   @JsonIgnoreProperties(ignoreUnknown = true)
   public static class PrimaryKey {
@@ -74,8 +67,9 @@ public class BprintSchema {
 
   public void require() {
     Objects.requireNonNull(schemaVersion, "schemaVersion is required");
-    Objects.requireNonNull(namespace, "namespace is required");
+    Objects.requireNonNull(entityName, "entityName is required");
     Objects.requireNonNull(description, "description is required");
-    Objects.requireNonNull(entity, "entity is required");
+    Objects.requireNonNull(primaryKey, "primaryKey is required");
+    Objects.requireNonNull(fields, "fields is required");
   }
 }

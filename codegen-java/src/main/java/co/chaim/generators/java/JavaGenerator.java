@@ -97,17 +97,11 @@ public class JavaGenerator {
     
     /**
      * Derive entity name from schema.
-     * Priority: entity.name > last part of namespace (capitalized) > "Entity"
+     * Uses entityName field directly, or defaults to "Entity".
      */
     private String deriveEntityName(BprintSchema schema) {
-        if (schema.entity != null && schema.entity.name != null && !schema.entity.name.isEmpty()) {
-            return schema.entity.name;
-        }
-        
-        if (schema.namespace != null && !schema.namespace.isEmpty()) {
-            String[] parts = schema.namespace.split("\\.");
-            String lastPart = parts[parts.length - 1];
-            return cap(lastPart);
+        if (schema.entityName != null && !schema.entityName.isEmpty()) {
+            return schema.entityName;
         }
         
         return "Entity";
@@ -116,13 +110,13 @@ public class JavaGenerator {
     /**
      * Generate entity DTO with schema-defined keys annotated for DynamoDB.
      * 
-     * The partition key field from schema.entity.primaryKey.partitionKey gets @DynamoDbPartitionKey.
-     * The sort key field (if defined) from schema.entity.primaryKey.sortKey gets @DynamoDbSortKey.
+     * The partition key field from schema.primaryKey.partitionKey gets @DynamoDbPartitionKey.
+     * The sort key field (if defined) from schema.primaryKey.sortKey gets @DynamoDbSortKey.
      * No extra pk/sk fields are invented - we use exactly what the schema defines.
      */
     private void generateEntity(BprintSchema schema, String entityName, String pkg, Path outDir) throws IOException {
-        String pkFieldName = schema.entity.primaryKey.partitionKey;
-        String skFieldName = schema.entity.primaryKey.sortKey;
+        String pkFieldName = schema.primaryKey.partitionKey;
+        String skFieldName = schema.primaryKey.sortKey;
         boolean hasSortKey = skFieldName != null && !skFieldName.isEmpty();
 
         TypeSpec.Builder tb = TypeSpec.classBuilder(entityName)
@@ -136,7 +130,7 @@ public class JavaGenerator {
             .addAnnotation(DYNAMO_DB_BEAN);
 
         // Add all fields from schema
-        for (BprintSchema.Field field : schema.entity.fields) {
+        for (BprintSchema.Field field : schema.fields) {
             ClassName type = mapType(field.type);
             tb.addField(FieldSpec.builder(type, field.name, Modifier.PRIVATE).build());
         }
@@ -175,7 +169,7 @@ public class JavaGenerator {
      * Find the type of a field by name in the schema.
      */
     private ClassName findFieldType(BprintSchema schema, String fieldName) {
-        for (BprintSchema.Field field : schema.entity.fields) {
+        for (BprintSchema.Field field : schema.fields) {
             if (field.name.equals(fieldName)) {
                 return mapType(field.type);
             }
@@ -193,8 +187,8 @@ public class JavaGenerator {
     private void generateEntityKeys(BprintSchema schema, String entityName, String pkg, Path outDir) throws IOException {
         String keysClassName = entityName + "Keys";
         
-        String pkFieldName = schema.entity.primaryKey.partitionKey;
-        String skFieldName = schema.entity.primaryKey.sortKey;
+        String pkFieldName = schema.primaryKey.partitionKey;
+        String skFieldName = schema.primaryKey.sortKey;
         boolean hasSortKey = skFieldName != null && !skFieldName.isEmpty();
 
         TypeSpec.Builder tb = TypeSpec.classBuilder(keysClassName)
@@ -263,8 +257,8 @@ public class JavaGenerator {
      */
     private void generateRepository(BprintSchema schema, String entityName, String pkg, Path outDir) throws IOException {
         String repoClassName = entityName + "Repository";
-        String pkFieldName = schema.entity.primaryKey.partitionKey;
-        String skFieldName = schema.entity.primaryKey.sortKey;
+        String pkFieldName = schema.primaryKey.partitionKey;
+        String skFieldName = schema.primaryKey.sortKey;
         boolean hasSortKey = skFieldName != null && !skFieldName.isEmpty();
         
         ClassName entityClass = ClassName.get(pkg, entityName);

@@ -11,24 +11,19 @@ import static org.assertj.core.api.Assertions.*;
 public class BprintSchemaTest {
 
   private BprintSchema schema;
-  private BprintSchema.Entity entity;
   private BprintSchema.PrimaryKey primaryKey;
   private BprintSchema.Field field;
 
   @BeforeEach
   void setUp() {
     schema = new BprintSchema();
-    entity = new BprintSchema.Entity();
     primaryKey = new BprintSchema.PrimaryKey();
     field = new BprintSchema.Field();
 
     // Setup valid schema
-    schema.schemaVersion = 1.0;
-    schema.namespace = "acme.orders";
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
     schema.description = "Basic order management system";
-
-    entity.name = "Order";
-    entity.description = "Order entity";
 
     primaryKey.partitionKey = "orderId";
     primaryKey.sortKey = "timestamp";
@@ -38,28 +33,19 @@ public class BprintSchemaTest {
     field.required = true;
     field.description = "Unique order identifier";
 
-    entity.primaryKey = primaryKey;
-    entity.fields = List.of(field);
-    schema.entity = entity;
+    schema.primaryKey = primaryKey;
+    schema.fields = List.of(field);
   }
 
   @Test
   void shouldCreateValidSchema() {
     assertThat(schema).isNotNull();
-    assertThat(schema.schemaVersion).isEqualTo(1.0);
-    assertThat(schema.namespace).isEqualTo("acme.orders");
+    assertThat(schema.schemaVersion).isEqualTo(1.1);
+    assertThat(schema.entityName).isEqualTo("Order");
     assertThat(schema.description).isEqualTo("Basic order management system");
-    assertThat(schema.entity).isNotNull();
-  }
-
-  @Test
-  void shouldCreateValidEntity() {
-    assertThat(entity).isNotNull();
-    assertThat(entity.name).isEqualTo("Order");
-    assertThat(entity.description).isEqualTo("Order entity");
-    assertThat(entity.primaryKey).isNotNull();
-    assertThat(entity.fields).isNotNull();
-    assertThat(entity.fields).hasSize(1);
+    assertThat(schema.primaryKey).isNotNull();
+    assertThat(schema.fields).isNotNull();
+    assertThat(schema.fields).hasSize(1);
   }
 
   @Test
@@ -81,45 +67,44 @@ public class BprintSchemaTest {
   @Test
   void shouldHandleNullValues() {
     schema.schemaVersion = null;
-    schema.namespace = null;
+    schema.entityName = null;
     schema.description = null;
-    schema.entity = null;
+    schema.primaryKey = null;
+    schema.fields = null;
 
     assertThat(schema.schemaVersion).isNull();
-    assertThat(schema.namespace).isNull();
+    assertThat(schema.entityName).isNull();
     assertThat(schema.description).isNull();
-    assertThat(schema.entity).isNull();
+    assertThat(schema.primaryKey).isNull();
+    assertThat(schema.fields).isNull();
   }
 
   @Test
   void shouldHandleEmptyStrings() {
-    // schemaVersion is now Double, so test other string fields only
-    schema.namespace = "";
+    schema.entityName = "";
     schema.description = "";
 
-    assertThat(schema.namespace).isEmpty();
+    assertThat(schema.entityName).isEmpty();
     assertThat(schema.description).isEmpty();
   }
 
   @Test
   void shouldHandleWhitespaceStrings() {
-    // schemaVersion is now Double, so test other string fields only
-    schema.namespace = "  acme.orders  ";
+    schema.entityName = "  Order  ";
     schema.description = "  Basic order management system  ";
 
-    assertThat(schema.namespace).isEqualTo("  acme.orders  ");
+    assertThat(schema.entityName).isEqualTo("  Order  ");
     assertThat(schema.description).isEqualTo("  Basic order management system  ");
   }
 
   @Test
   void shouldHandleSpecialCharacters() {
-    // schemaVersion is now Double
     schema.schemaVersion = 1.5;
-    schema.namespace = "acme.orders.v2";
+    schema.entityName = "Order-v2";
     schema.description = "Order management system with special chars: @#$%^&*()";
 
     assertThat(schema.schemaVersion).isEqualTo(1.5);
-    assertThat(schema.namespace).isEqualTo("acme.orders.v2");
+    assertThat(schema.entityName).isEqualTo("Order-v2");
     assertThat(schema.description).isEqualTo("Order management system with special chars: @#$%^&*()");
   }
 
@@ -152,20 +137,6 @@ public class BprintSchemaTest {
     assertThat(schema.description).hasSize(1000);
   }
 
-  @Test
-  void shouldHandleEntityWithNullValues() {
-    entity.name = null;
-    entity.description = null;
-    entity.primaryKey = null;
-    entity.fields = null;
-    entity.annotations = null;
-
-    assertThat(entity.name).isNull();
-    assertThat(entity.description).isNull();
-    assertThat(entity.primaryKey).isNull();
-    assertThat(entity.fields).isNull();
-    assertThat(entity.annotations).isNull();
-  }
 
   @Test
   void shouldHandlePrimaryKeyWithNullValues() {
@@ -279,19 +250,19 @@ public class BprintSchemaTest {
     annotations.retention = "7years";
     annotations.encryption = "required";
 
-    entity.annotations = annotations;
+    schema.annotations = annotations;
 
-    assertThat(entity.annotations).isNotNull();
-    assertThat(entity.annotations.pii).isTrue();
-    assertThat(entity.annotations.retention).isEqualTo("7years");
-    assertThat(entity.annotations.encryption).isEqualTo("required");
+    assertThat(schema.annotations).isNotNull();
+    assertThat(schema.annotations.pii).isTrue();
+    assertThat(schema.annotations.retention).isEqualTo("7years");
+    assertThat(schema.annotations.encryption).isEqualTo("required");
   }
 
   @Test
   void shouldHandleNullAnnotations() {
-    entity.annotations = null;
+    schema.annotations = null;
 
-    assertThat(entity.annotations).isNull();
+    assertThat(schema.annotations).isNull();
   }
 
   @Test
@@ -301,11 +272,11 @@ public class BprintSchemaTest {
     annotations.retention = null;
     annotations.encryption = null;
 
-    entity.annotations = annotations;
+    schema.annotations = annotations;
 
-    assertThat(entity.annotations.pii).isNull();
-    assertThat(entity.annotations.retention).isNull();
-    assertThat(entity.annotations.encryption).isNull();
+    assertThat(schema.annotations.pii).isNull();
+    assertThat(schema.annotations.retention).isNull();
+    assertThat(schema.annotations.encryption).isNull();
   }
 
   @Test
@@ -313,9 +284,9 @@ public class BprintSchemaTest {
     BprintSchema.Annotations annotations = new BprintSchema.Annotations();
     annotations.pii = false;
 
-    entity.annotations = annotations;
+    schema.annotations = annotations;
 
-    assertThat(entity.annotations.pii).isFalse();
+    assertThat(schema.annotations.pii).isFalse();
   }
 
   @Test
@@ -324,10 +295,10 @@ public class BprintSchemaTest {
     annotations.retention = "7-years_with.special@chars";
     annotations.encryption = "required: AES-256";
 
-    entity.annotations = annotations;
+    schema.annotations = annotations;
 
-    assertThat(entity.annotations.retention).isEqualTo("7-years_with.special@chars");
-    assertThat(entity.annotations.encryption).isEqualTo("required: AES-256");
+    assertThat(schema.annotations.retention).isEqualTo("7-years_with.special@chars");
+    assertThat(schema.annotations.encryption).isEqualTo("required: AES-256");
   }
 
   @Test
@@ -342,26 +313,26 @@ public class BprintSchemaTest {
     field3.type = "number";
     field3.required = false;
 
-    entity.fields = List.of(field, field2, field3);
+    schema.fields = List.of(field, field2, field3);
 
-    assertThat(entity.fields).hasSize(3);
-    assertThat(entity.fields.get(0).name).isEqualTo("orderId");
-    assertThat(entity.fields.get(1).name).isEqualTo("customerId");
-    assertThat(entity.fields.get(2).name).isEqualTo("amount");
+    assertThat(schema.fields).hasSize(3);
+    assertThat(schema.fields.get(0).name).isEqualTo("orderId");
+    assertThat(schema.fields.get(1).name).isEqualTo("customerId");
+    assertThat(schema.fields.get(2).name).isEqualTo("amount");
   }
 
   @Test
   void shouldHandleEmptyFieldsList() {
-    entity.fields = new ArrayList<>();
+    schema.fields = new ArrayList<>();
 
-    assertThat(entity.fields).isEmpty();
+    assertThat(schema.fields).isEmpty();
   }
 
   @Test
   void shouldHandleNullFieldsList() {
-    entity.fields = null;
+    schema.fields = null;
 
-    assertThat(entity.fields).isNull();
+    assertThat(schema.fields).isNull();
   }
 
   @Test
@@ -388,13 +359,13 @@ public class BprintSchemaTest {
     timestampField.type = "timestamp";
     allTypeFields.add(timestampField);
 
-    entity.fields = allTypeFields;
+    schema.fields = allTypeFields;
 
-    assertThat(entity.fields).hasSize(4);
-    assertThat(entity.fields.get(0).type).isEqualTo("string");
-    assertThat(entity.fields.get(1).type).isEqualTo("number");
-    assertThat(entity.fields.get(2).type).isEqualTo("bool");
-    assertThat(entity.fields.get(3).type).isEqualTo("timestamp");
+    assertThat(schema.fields).hasSize(4);
+    assertThat(schema.fields.get(0).type).isEqualTo("string");
+    assertThat(schema.fields.get(1).type).isEqualTo("number");
+    assertThat(schema.fields.get(2).type).isEqualTo("bool");
+    assertThat(schema.fields.get(3).type).isEqualTo("timestamp");
   }
 
   @Test
@@ -406,10 +377,10 @@ public class BprintSchemaTest {
     optionalField.type = "string";
     optionalField.required = false;
 
-    entity.fields = List.of(field, optionalField);
+    schema.fields = List.of(field, optionalField);
 
-    assertThat(entity.fields.get(0).required).isTrue();
-    assertThat(entity.fields.get(1).required).isFalse();
+    assertThat(schema.fields.get(0).required).isTrue();
+    assertThat(schema.fields.get(1).required).isFalse();
   }
 
   @Test
@@ -458,10 +429,11 @@ public class BprintSchemaTest {
 
   @Test
   void shouldHandleComplexNestedStructure() {
-    // Create a complex nested structure
-    BprintSchema.Entity nestedEntity = new BprintSchema.Entity();
-    nestedEntity.name = "ComplexEntity";
-    nestedEntity.description = "A complex entity with many fields";
+    // Create a complex schema structure
+    BprintSchema complexSchema = new BprintSchema();
+    complexSchema.schemaVersion = 1.1;
+    complexSchema.entityName = "ComplexEntity";
+    complexSchema.description = "A complex entity with many fields";
 
     BprintSchema.PrimaryKey nestedPk = new BprintSchema.PrimaryKey();
     nestedPk.partitionKey = "id";
@@ -491,31 +463,31 @@ public class BprintSchemaTest {
       nestedFields.add(f);
     }
 
-    nestedEntity.primaryKey = nestedPk;
-    nestedEntity.fields = nestedFields;
+    complexSchema.primaryKey = nestedPk;
+    complexSchema.fields = nestedFields;
 
     BprintSchema.Annotations nestedAnnotations = new BprintSchema.Annotations();
     nestedAnnotations.pii = true;
     nestedAnnotations.retention = "10years";
     nestedAnnotations.encryption = "AES-256";
 
-    nestedEntity.annotations = nestedAnnotations;
+    complexSchema.annotations = nestedAnnotations;
 
     // Verify the complex structure
-    assertThat(nestedEntity.name).isEqualTo("ComplexEntity");
-    assertThat(nestedEntity.description).isEqualTo("A complex entity with many fields");
-    assertThat(nestedEntity.primaryKey.partitionKey).isEqualTo("id");
-    assertThat(nestedEntity.primaryKey.sortKey).isEqualTo("timestamp");
-    assertThat(nestedEntity.fields).hasSize(10);
-    assertThat(nestedEntity.annotations.pii).isTrue();
-    assertThat(nestedEntity.annotations.retention).isEqualTo("10years");
-    assertThat(nestedEntity.annotations.encryption).isEqualTo("AES-256");
+    assertThat(complexSchema.entityName).isEqualTo("ComplexEntity");
+    assertThat(complexSchema.description).isEqualTo("A complex entity with many fields");
+    assertThat(complexSchema.primaryKey.partitionKey).isEqualTo("id");
+    assertThat(complexSchema.primaryKey.sortKey).isEqualTo("timestamp");
+    assertThat(complexSchema.fields).hasSize(10);
+    assertThat(complexSchema.annotations.pii).isTrue();
+    assertThat(complexSchema.annotations.retention).isEqualTo("10years");
+    assertThat(complexSchema.annotations.encryption).isEqualTo("AES-256");
 
     // Verify field types
-    assertThat(nestedEntity.fields.get(0).type).isEqualTo("string");
-    assertThat(nestedEntity.fields.get(1).type).isEqualTo("number");
-    assertThat(nestedEntity.fields.get(2).type).isEqualTo("bool");
-    assertThat(nestedEntity.fields.get(3).type).isEqualTo("timestamp");
-    assertThat(nestedEntity.fields.get(4).type).isEqualTo("string");
+    assertThat(complexSchema.fields.get(0).type).isEqualTo("string");
+    assertThat(complexSchema.fields.get(1).type).isEqualTo("number");
+    assertThat(complexSchema.fields.get(2).type).isEqualTo("bool");
+    assertThat(complexSchema.fields.get(3).type).isEqualTo("timestamp");
+    assertThat(complexSchema.fields.get(4).type).isEqualTo("string");
   }
 }

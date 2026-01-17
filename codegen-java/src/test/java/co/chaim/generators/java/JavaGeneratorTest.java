@@ -28,15 +28,13 @@ public class JavaGeneratorTest {
 
     // Create User schema (partition key only)
     userSchema = new BprintSchema();
-    userSchema.schemaVersion = 1.0;
-    userSchema.namespace = "example.users";
+    userSchema.schemaVersion = 1.1;
+    userSchema.entityName = "User";
     userSchema.description = "User entity";
 
-    BprintSchema.Entity userEntity = new BprintSchema.Entity();
-    userEntity.name = "User";
     BprintSchema.PrimaryKey userPk = new BprintSchema.PrimaryKey();
     userPk.partitionKey = "userId";  // Schema-defined partition key
-    userEntity.primaryKey = userPk;
+    userSchema.primaryKey = userPk;
     
     BprintSchema.Field userIdField = new BprintSchema.Field();
     userIdField.name = "userId";
@@ -48,21 +46,18 @@ public class JavaGeneratorTest {
     emailField.type = "string";
     emailField.required = true;
     
-    userEntity.fields = List.of(userIdField, emailField);
-    userSchema.entity = userEntity;
+    userSchema.fields = List.of(userIdField, emailField);
 
     // Create User schema with sort key (for composite key tests)
     userWithSortKeySchema = new BprintSchema();
-    userWithSortKeySchema.schemaVersion = 1.0;
-    userWithSortKeySchema.namespace = "example.users";
+    userWithSortKeySchema.schemaVersion = 1.1;
+    userWithSortKeySchema.entityName = "User";
     userWithSortKeySchema.description = "User entity with sort key";
 
-    BprintSchema.Entity userWithSkEntity = new BprintSchema.Entity();
-    userWithSkEntity.name = "User";
     BprintSchema.PrimaryKey userWithSkPk = new BprintSchema.PrimaryKey();
     userWithSkPk.partitionKey = "userId";
     userWithSkPk.sortKey = "entityType";  // Schema-defined sort key
-    userWithSkEntity.primaryKey = userWithSkPk;
+    userWithSortKeySchema.primaryKey = userWithSkPk;
     
     BprintSchema.Field userIdField2 = new BprintSchema.Field();
     userIdField2.name = "userId";
@@ -79,21 +74,18 @@ public class JavaGeneratorTest {
     emailField2.type = "string";
     emailField2.required = true;
     
-    userWithSkEntity.fields = List.of(userIdField2, entityTypeField, emailField2);
-    userWithSortKeySchema.entity = userWithSkEntity;
+    userWithSortKeySchema.fields = List.of(userIdField2, entityTypeField, emailField2);
 
     // Create Order schema (same keys as userWithSortKeySchema for multi-entity tests)
     orderSchema = new BprintSchema();
-    orderSchema.schemaVersion = 1.0;
-    orderSchema.namespace = "example.orders";
+    orderSchema.schemaVersion = 1.1;
+    orderSchema.entityName = "Order";
     orderSchema.description = "Order entity";
 
-    BprintSchema.Entity orderEntity = new BprintSchema.Entity();
-    orderEntity.name = "Order";
     BprintSchema.PrimaryKey orderPk = new BprintSchema.PrimaryKey();
     orderPk.partitionKey = "userId";     // Same PK as User for multi-entity table
     orderPk.sortKey = "entityType";       // Same SK as User for multi-entity table
-    orderEntity.primaryKey = orderPk;
+    orderSchema.primaryKey = orderPk;
     
     BprintSchema.Field orderUserIdField = new BprintSchema.Field();
     orderUserIdField.name = "userId";
@@ -110,8 +102,7 @@ public class JavaGeneratorTest {
     amountField.type = "number";
     amountField.required = true;
     
-    orderEntity.fields = List.of(orderUserIdField, orderEntityTypeField, amountField);
-    orderSchema.entity = orderEntity;
+    orderSchema.fields = List.of(orderUserIdField, orderEntityTypeField, amountField);
 
     // Create table metadata (simple record with just table info)
     tableMetadata = new TableMetadata(
@@ -381,34 +372,30 @@ public class JavaGeneratorTest {
 
   @Test
   void derivesEntityNameFromNamespace() throws Exception {
-    // Create schema without explicit entity.name
+    // Create schema without explicit entityName - should default to "Entity"
     BprintSchema schemaWithoutName = new BprintSchema();
-    schemaWithoutName.schemaVersion = 1.0;
-    schemaWithoutName.namespace = "example.products";
+    schemaWithoutName.schemaVersion = 1.1;
+    schemaWithoutName.entityName = null;  // Not set
     schemaWithoutName.description = "Products";
 
-    BprintSchema.Entity entity = new BprintSchema.Entity();
-    // Note: entity.name is NOT set
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "productId";
-    entity.primaryKey = pk;
+    schemaWithoutName.primaryKey = pk;
     
     BprintSchema.Field field = new BprintSchema.Field();
     field.name = "productId";
     field.type = "string";
     field.required = true;
-    entity.fields = List.of(field);
-    
-    schemaWithoutName.entity = entity;
+    schemaWithoutName.fields = List.of(field);
 
     Path out = tempDir.resolve("generated");
     generator.generateForTable(List.of(schemaWithoutName), "com.example.model", out, tableMetadata);
 
-    // Should derive "Products" from namespace "example.products"
-    assertThat(Files.exists(out.resolve("com/example/model/Products.java"))).isTrue();
-    assertThat(Files.exists(out.resolve("com/example/model/keys/ProductsKeys.java"))).isTrue();
+    // Should default to "Entity" when entityName is not set
+    assertThat(Files.exists(out.resolve("com/example/model/Entity.java"))).isTrue();
+    assertThat(Files.exists(out.resolve("com/example/model/keys/EntityKeys.java"))).isTrue();
     
-    String keysContent = Files.readString(out.resolve("com/example/model/keys/ProductsKeys.java"));
+    String keysContent = Files.readString(out.resolve("com/example/model/keys/EntityKeys.java"));
     assertThat(keysContent).contains("PARTITION_KEY_FIELD = \"productId\"");
   }
 }

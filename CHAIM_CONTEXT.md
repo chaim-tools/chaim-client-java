@@ -39,21 +39,21 @@ user defines   user deploys                   user generates
 
 ## Schema-Driven Keys (Core Design)
 
-When you define your `.bprint` schema:
+When you define your `.bprint` schema (v1.1):
 ```json
 {
-  "entity": {
-    "name": "User",
-    "primaryKey": {
-      "partitionKey": "userId",    // ← This field gets @DynamoDbPartitionKey
-      "sortKey": "entityType"       // ← This field gets @DynamoDbSortKey
-    },
-    "fields": [
-      { "name": "userId", "type": "string" },
-      { "name": "entityType", "type": "string" },
-      { "name": "email", "type": "string" }
-    ]
-  }
+  "schemaVersion": 1.1,
+  "entityName": "User",
+  "description": "User entity",
+  "primaryKey": {
+    "partitionKey": "userId",    // ← This field gets @DynamoDbPartitionKey
+    "sortKey": "entityType"       // ← This field gets @DynamoDbSortKey
+  },
+  "fields": [
+    { "name": "userId", "type": "string" },
+    { "name": "entityType", "type": "string" },
+    { "name": "email", "type": "string" }
+  ]
 }
 ```
 
@@ -137,7 +137,7 @@ Java is invoked with **multiple schemas**:
 ```bash
 # Inline JSON array
 java -jar codegen-java.jar \
-  --schemas '[{"schemaVersion":"v1",...},{"schemaVersion":"v1",...}]' \
+  --schemas '[{"schemaVersion":1.1,"entityName":"User",...},{"schemaVersion":1.1,"entityName":"Order",...}]' \
   --package com.example.model \
   --output ./src/main/java \
   --table-metadata '{"tableName":"DataTable","tableArn":"arn:..."}'
@@ -464,14 +464,16 @@ The wrapper checks for JAR in this order:
 
 ## Entity name derivation
 
-When `entity.name` is not present in the schema, the generator derives it from `namespace`:
+The generator uses the `entityName` field directly:
 
 ```java
-// Priority: entity.name > namespace derivation > "Entity"
-// Example: "example.users" → "Users"
-String[] parts = schema.namespace.split("\\.");
-String lastPart = parts[parts.length - 1];
-return capitalize(lastPart);
+// Priority: entityName (required in v1.1) > "Entity" fallback
+private String deriveEntityName(BprintSchema schema) {
+    if (schema.entityName != null && !schema.entityName.isEmpty()) {
+        return schema.entityName;
+    }
+    return "Entity";  // Fallback for schemas without entityName
+}
 ```
 
 ---

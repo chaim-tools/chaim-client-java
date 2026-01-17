@@ -13,21 +13,18 @@ public class BprintValidatorTest {
   @Test
   void validatesHappyPath() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatCode(() -> BprintValidator.validate(s)).doesNotThrowAnyException();
   }
@@ -36,20 +33,17 @@ public class BprintValidatorTest {
   void rejectsMissingSchemaVersion() {
     BprintSchema s = new BprintSchema();
     s.schemaVersion = null;
-    s.namespace = "acme.orders";
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
@@ -60,21 +54,18 @@ public class BprintValidatorTest {
   void acceptsValidSchemaVersion() {
     // schemaVersion is now a Double, so test that various valid versions are accepted
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     // Should not throw - validates successfully
     BprintValidator.validate(s);
@@ -85,71 +76,62 @@ public class BprintValidatorTest {
   }
 
   @Test
-  void rejectsMissingNamespace() {
+  void rejectsMissingEntityName() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = null;
+    s.schemaVersion = 1.1;
+    s.entityName = null;
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
-      .hasMessageContaining("namespace required");
+      .hasMessageContaining("entityName required");
   }
 
   @Test
-  void rejectsEmptyNamespace() {
+  void rejectsEmptyEntityName() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "";
+    s.schemaVersion = 1.1;
+    s.entityName = "";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
-      .hasMessageContaining("namespace required");
+      .hasMessageContaining("entityName required");
   }
 
   @Test
   void rejectsMissingDescription() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = null;
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
@@ -159,21 +141,18 @@ public class BprintValidatorTest {
   @Test
   void rejectsEmptyDescription() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
@@ -181,194 +160,115 @@ public class BprintValidatorTest {
   }
 
   @Test
-  void rejectsMissingEntity() {
-    BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
-    s.description = "Basic order management system";
-    s.entity = null;
-
-    assertThatThrownBy(() -> BprintValidator.validate(s))
-      .isInstanceOf(IllegalArgumentException.class)
-      .hasMessageContaining("entity is required");
-  }
-
-  @Test
-  void rejectsMissingEntityName() {
-    BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
-    s.description = "Basic order management system";
-
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = null;
-    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
-    pk.partitionKey = "orderId";
-    e.primaryKey = pk;
-    BprintSchema.Field f = new BprintSchema.Field();
-    f.name = "orderId";
-    f.type = "string";
-    f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
-
-    assertThatThrownBy(() -> BprintValidator.validate(s))
-      .isInstanceOf(IllegalArgumentException.class)
-      .hasMessageContaining("entity.name required");
-  }
-
-  @Test
-  void rejectsEmptyEntityName() {
-    BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
-    s.description = "Basic order management system";
-
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "";
-    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
-    pk.partitionKey = "orderId";
-    e.primaryKey = pk;
-    BprintSchema.Field f = new BprintSchema.Field();
-    f.name = "orderId";
-    f.type = "string";
-    f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
-
-    assertThatThrownBy(() -> BprintValidator.validate(s))
-      .isInstanceOf(IllegalArgumentException.class)
-      .hasMessageContaining("entity.name required");
-  }
-
-  @Test
   void rejectsMissingPrimaryKey() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
-    e.primaryKey = null;
+    s.primaryKey = null;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
-      .hasMessageContaining("entity.primaryKey.partitionKey required");
+      .hasMessageContaining("primaryKey is required");
   }
 
   @Test
   void rejectsMissingPartitionKey() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = null;
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
-      .hasMessageContaining("entity.primaryKey.partitionKey required");
+      .hasMessageContaining("primaryKey.partitionKey required");
   }
 
   @Test
   void rejectsEmptyPartitionKey() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
-      .hasMessageContaining("entity.primaryKey.partitionKey required");
+      .hasMessageContaining("primaryKey.partitionKey required");
   }
 
   @Test
   void rejectsMissingFields() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
-    e.fields = null;
-    s.entity = e;
+    s.primaryKey = pk;
+    s.fields = null;
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
-      .hasMessageContaining("entity.fields must have at least one field");
+      .hasMessageContaining("fields must have at least one field");
   }
 
   @Test
   void rejectsEmptyFields() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
-    e.fields = new ArrayList<>();
-    s.entity = e;
+    s.primaryKey = pk;
+    s.fields = new ArrayList<>();
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
-      .hasMessageContaining("entity.fields must have at least one field");
+      .hasMessageContaining("fields must have at least one field");
   }
 
   @Test
   void rejectsFieldWithMissingName() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = null;
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
@@ -378,21 +278,18 @@ public class BprintValidatorTest {
   @Test
   void rejectsFieldWithEmptyName() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "";
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
@@ -402,21 +299,18 @@ public class BprintValidatorTest {
   @Test
   void rejectsFieldWithMissingType() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = null;
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
@@ -426,21 +320,18 @@ public class BprintValidatorTest {
   @Test
   void rejectsFieldWithEmptyType() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
@@ -450,21 +341,18 @@ public class BprintValidatorTest {
   @Test
   void rejectsBadType() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "money";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
@@ -474,15 +362,13 @@ public class BprintValidatorTest {
   @Test
   void rejectsDuplicateFieldNames() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
 
     BprintSchema.Field f1 = new BprintSchema.Field();
     f1.name = "orderId";
@@ -494,8 +380,7 @@ public class BprintValidatorTest {
     f2.type = "string";
     f2.required = false;
 
-    e.fields = List.of(f1, f2);
-    s.entity = e;
+    s.fields = List.of(f1, f2);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
@@ -505,15 +390,13 @@ public class BprintValidatorTest {
   @Test
   void validatesAllSupportedFieldTypes() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
 
     BprintSchema.Field stringField = new BprintSchema.Field();
     stringField.name = "name";
@@ -535,8 +418,7 @@ public class BprintValidatorTest {
     timestampField.type = "timestamp";
     timestampField.required = false;
 
-    e.fields = List.of(stringField, numberField, boolField, timestampField);
-    s.entity = e;
+    s.fields = List.of(stringField, numberField, boolField, timestampField);
 
     assertThatCode(() -> BprintValidator.validate(s)).doesNotThrowAnyException();
   }
@@ -544,15 +426,13 @@ public class BprintValidatorTest {
   @Test
   void validatesEnumValues() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
 
     BprintSchema.Field f1 = new BprintSchema.Field();
     f1.name = "orderId";
@@ -565,8 +445,7 @@ public class BprintValidatorTest {
     enumField.required = false;
     enumField.enumValues = List.of("pending", "processing", "completed", "cancelled");
 
-    e.fields = List.of(f1, enumField);
-    s.entity = e;
+    s.fields = List.of(f1, enumField);
 
     assertThatCode(() -> BprintValidator.validate(s)).doesNotThrowAnyException();
   }
@@ -574,15 +453,13 @@ public class BprintValidatorTest {
   @Test
   void rejectsEmptyEnumValues() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
 
     BprintSchema.Field f1 = new BprintSchema.Field();
     f1.name = "orderId";
@@ -595,8 +472,7 @@ public class BprintValidatorTest {
     enumField.required = false;
     enumField.enumValues = new ArrayList<>();
 
-    e.fields = List.of(f1, enumField);
-    s.entity = e;
+    s.fields = List.of(f1, enumField);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
@@ -606,15 +482,13 @@ public class BprintValidatorTest {
   @Test
   void rejectsEnumWithEmptyString() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
 
     BprintSchema.Field f1 = new BprintSchema.Field();
     f1.name = "orderId";
@@ -627,8 +501,7 @@ public class BprintValidatorTest {
     enumField.required = false;
     enumField.enumValues = List.of("pending", "", "completed");
 
-    e.fields = List.of(f1, enumField);
-    s.entity = e;
+    s.fields = List.of(f1, enumField);
 
     assertThatThrownBy(() -> BprintValidator.validate(s))
       .isInstanceOf(IllegalArgumentException.class)
@@ -638,22 +511,19 @@ public class BprintValidatorTest {
   @Test
   void validatesSortKey() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
     pk.sortKey = "timestamp";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
-    s.entity = e;
+    s.fields = List.of(f);
 
     assertThatCode(() -> BprintValidator.validate(s)).doesNotThrowAnyException();
   }
@@ -661,15 +531,13 @@ public class BprintValidatorTest {
   @Test
   void validatesMultipleFields() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
 
     BprintSchema.Field f1 = new BprintSchema.Field();
     f1.name = "orderId";
@@ -686,8 +554,7 @@ public class BprintValidatorTest {
     f3.type = "number";
     f3.required = true;
 
-    e.fields = List.of(f1, f2, f3);
-    s.entity = e;
+    s.fields = List.of(f1, f2, f3);
 
     assertThatCode(() -> BprintValidator.validate(s)).doesNotThrowAnyException();
   }
@@ -695,28 +562,24 @@ public class BprintValidatorTest {
   @Test
   void validatesAnnotations() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
+    s.fields = List.of(f);
 
     BprintSchema.Annotations annotations = new BprintSchema.Annotations();
     annotations.pii = true;
     annotations.retention = "7years";
     annotations.encryption = "required";
-    e.annotations = annotations;
-
-    s.entity = e;
+    s.annotations = annotations;
 
     assertThatCode(() -> BprintValidator.validate(s)).doesNotThrowAnyException();
   }
@@ -724,22 +587,19 @@ public class BprintValidatorTest {
   @Test
   void validatesNullAnnotations() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
     BprintSchema.Field f = new BprintSchema.Field();
     f.name = "orderId";
     f.type = "string";
     f.required = true;
-    e.fields = List.of(f);
-    e.annotations = null;
-    s.entity = e;
+    s.fields = List.of(f);
+    s.annotations = null;
 
     assertThatCode(() -> BprintValidator.validate(s)).doesNotThrowAnyException();
   }
@@ -747,15 +607,13 @@ public class BprintValidatorTest {
   @Test
   void validatesFieldWithDefaultValue() {
     BprintSchema s = new BprintSchema();
-    s.schemaVersion = 1.0;
-    s.namespace = "acme.orders";
+    s.schemaVersion = 1.1;
+    s.entityName = "Order";
     s.description = "Basic order management system";
 
-    BprintSchema.Entity e = new BprintSchema.Entity();
-    e.name = "Order";
     BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
     pk.partitionKey = "orderId";
-    e.primaryKey = pk;
+    s.primaryKey = pk;
 
     BprintSchema.Field f1 = new BprintSchema.Field();
     f1.name = "orderId";
@@ -768,8 +626,7 @@ public class BprintValidatorTest {
     fieldWithDefault.required = false;
     fieldWithDefault.defaultValue = true;
 
-    e.fields = List.of(f1, fieldWithDefault);
-    s.entity = e;
+    s.fields = List.of(f1, fieldWithDefault);
 
     assertThatCode(() -> BprintValidator.validate(s)).doesNotThrowAnyException();
   }
