@@ -7,7 +7,10 @@ import javax.lang.model.element.Modifier;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Java code generator for DynamoDB Enhanced Client.
@@ -15,6 +18,10 @@ import java.util.List;
  * Uses schema-defined primary keys directly - no invented fields.
  * The partition key and sort key defined in the .bprint schema are
  * annotated with @DynamoDbPartitionKey and @DynamoDbSortKey respectively.
+ * 
+ * Supports nameOverride for fields whose DynamoDB attribute names are not
+ * valid Java identifiers. When the resolved code name differs from the
+ * original DynamoDB attribute name, a @DynamoDbAttribute annotation is emitted.
  * 
  * Generates:
  * - Entity DTOs with DynamoDB Enhanced Client annotations on schema-defined keys
@@ -25,6 +32,8 @@ import java.util.List;
  */
 public class JavaGenerator {
 
+    private static final Pattern VALID_JAVA_IDENTIFIER = Pattern.compile("^[a-zA-Z_$][a-zA-Z0-9_$]*$");
+
     // DynamoDB Enhanced Client annotation class names
     private static final ClassName DYNAMO_DB_BEAN = ClassName.get(
         "software.amazon.awssdk.enhanced.dynamodb.mapper.annotations", "DynamoDbBean");
@@ -32,6 +41,8 @@ public class JavaGenerator {
         "software.amazon.awssdk.enhanced.dynamodb.mapper.annotations", "DynamoDbPartitionKey");
     private static final ClassName DYNAMO_DB_SORT_KEY = ClassName.get(
         "software.amazon.awssdk.enhanced.dynamodb.mapper.annotations", "DynamoDbSortKey");
+    private static final ClassName DYNAMO_DB_ATTRIBUTE = ClassName.get(
+        "software.amazon.awssdk.enhanced.dynamodb.mapper.annotations", "DynamoDbAttribute");
     
     // Lombok annotation class names
     private static final ClassName LOMBOK_DATA = ClassName.get("lombok", "Data");
@@ -63,6 +74,11 @@ public class JavaGenerator {
      * @param tableMetadata Table metadata (name, ARN, region)
      */
     public void generateForTable(List<BprintSchema> schemas, String pkg, Path outDir, TableMetadata tableMetadata) throws IOException {
+        // Validate all schemas for name collisions before generating any code
+        for (BprintSchema schema : schemas) {
+            detectCollisions(schema.fields);
+        }
+
         // Collect entity names for shared infrastructure generation
         List<String> entityNames = new ArrayList<>();
         for (BprintSchema schema : schemas) {
@@ -71,24 +87,15 @@ public class JavaGenerator {
 
         // 1. Generate shared infrastructure ONCE
         if (tableMetadata != null) {
-            // Generate ChaimDynamoDbClient (shared DI-friendly client)
             generateChaimDynamoDbClient(pkg, outDir);
-            
-            // Generate ChaimConfig with repository factories
             generateChaimConfig(tableMetadata, pkg, entityNames, outDir);
         }
 
         // 2. Generate entity + keys + repository for each schema
         for (BprintSchema schema : schemas) {
             String entityName = deriveEntityName(schema);
-            
-            // Generate entity DTO with schema-defined keys
             generateEntity(schema, entityName, pkg, outDir);
-            
-            // Generate key constants helper
             generateEntityKeys(schema, entityName, pkg, outDir);
-            
-            // Generate repository with key-based operations
             if (tableMetadata != null) {
                 generateRepository(schema, entityName, pkg, outDir);
             }
@@ -103,61 +110,213 @@ public class JavaGenerator {
         if (schema.entityName != null && !schema.entityName.isEmpty()) {
             return schema.entityName;
         }
-        
         return "Entity";
     }
+
+    // =========================================================================
+    // Name Resolution
+    // =========================================================================
+
+    /**
+     * Resolve the Java code name for a field.
+     * 
+     * If nameOverride is set, use it directly.
+     * Otherwise, auto-convert the DynamoDB attribute name to a valid Java identifier.
+     */
+    static String resolveCodeName(BprintSchema.Field field) {
+        if (field.nameOverride != null && !field.nameOverride.isEmpty()) {
+            return field.nameOverride;
+        }
+        if (VALID_JAVA_IDENTIFIER.matcher(field.name).matches()) {
+            return field.name;
+        }
+        return toJavaCamelCase(field.name);
+    }
+
+    /**
+     * Resolve the Java code name for a key field referenced by name.
+     * Looks up the field in the schema and resolves its code name.
+     */
+    private String resolveKeyCodeName(BprintSchema schema, String keyFieldName) {
+        for (BprintSchema.Field field : schema.fields) {
+            if (field.name.equals(keyFieldName)) {
+                return resolveCodeName(field);
+            }
+        }
+        return toJavaCamelCase(keyFieldName);
+    }
+
+    /**
+     * Convert a DynamoDB attribute name to a valid Java camelCase identifier.
+     * 
+     * Rules:
+     * - Split on hyphens and underscores
+     * - First segment is lowercased, subsequent segments have first letter capitalized
+     * - Leading digits get underscore prefix
+     * - All-caps strings are lowercased
+     */
+    static String toJavaCamelCase(String name) {
+        if (name == null || name.isEmpty()) {
+            return name;
+        }
+
+        // Handle all-caps: TTL -> ttl, ABC -> abc
+        if (name.equals(name.toUpperCase()) && name.length() > 1 && !name.contains("-") && !name.contains("_")) {
+            String result = name.toLowerCase();
+            if (Character.isDigit(result.charAt(0))) {
+                result = "_" + result;
+            }
+            return result;
+        }
+
+        // Split on hyphens and underscores
+        String[] parts = name.split("[-_]");
+        if (parts.length == 0) {
+            return name;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i++) {
+            String part = parts[i];
+            if (part.isEmpty()) continue;
+
+            if (sb.isEmpty()) {
+                // First segment: lowercase
+                sb.append(part.substring(0, 1).toLowerCase());
+                if (part.length() > 1) {
+                    sb.append(part.substring(1));
+                }
+            } else {
+                // Subsequent segments: capitalize first letter
+                sb.append(part.substring(0, 1).toUpperCase());
+                if (part.length() > 1) {
+                    sb.append(part.substring(1));
+                }
+            }
+        }
+
+        String result = sb.toString();
+
+        // Prefix with underscore if starts with a digit
+        if (!result.isEmpty() && Character.isDigit(result.charAt(0))) {
+            result = "_" + result;
+        }
+
+        return result;
+    }
+
+    /**
+     * Check if a @DynamoDbAttribute annotation is needed for this field.
+     * The annotation is needed when the Java code name differs from the DynamoDB attribute name.
+     */
+    static boolean needsAttributeAnnotation(BprintSchema.Field field, String codeName) {
+        return !codeName.equals(field.name);
+    }
+
+    /**
+     * Detect collisions in resolved code names across all fields.
+     * Two fields that resolve to the same Java identifier must be caught before generation.
+     */
+    static void detectCollisions(List<BprintSchema.Field> fields) {
+        Map<String, List<String>> codeNameToOriginals = new HashMap<>();
+        for (BprintSchema.Field field : fields) {
+            String codeName = resolveCodeName(field);
+            codeNameToOriginals.computeIfAbsent(codeName, k -> new ArrayList<>()).add(field.name);
+        }
+
+        for (Map.Entry<String, List<String>> entry : codeNameToOriginals.entrySet()) {
+            if (entry.getValue().size() > 1) {
+                throw new IllegalArgumentException(
+                    "Name collision: fields " + entry.getValue() +
+                    " all resolve to Java identifier '" + entry.getKey() +
+                    "'. Add nameOverride to one of the conflicting fields in your .bprint."
+                );
+            }
+        }
+    }
+
+    /**
+     * Build a @DynamoDbAttribute annotation for the given DynamoDB attribute name.
+     */
+    private static AnnotationSpec dynamoDbAttributeAnnotation(String attributeName) {
+        return AnnotationSpec.builder(DYNAMO_DB_ATTRIBUTE)
+            .addMember("value", "$S", attributeName)
+            .build();
+    }
+
+    // =========================================================================
+    // Entity Generation
+    // =========================================================================
 
     /**
      * Generate entity DTO with schema-defined keys annotated for DynamoDB.
      * 
-     * The partition key field from schema.primaryKey.partitionKey gets @DynamoDbPartitionKey.
-     * The sort key field (if defined) from schema.primaryKey.sortKey gets @DynamoDbSortKey.
-     * No extra pk/sk fields are invented - we use exactly what the schema defines.
+     * Uses resolved code names for Java fields and emits @DynamoDbAttribute
+     * annotations when the code name differs from the DynamoDB attribute name.
      */
     private void generateEntity(BprintSchema schema, String entityName, String pkg, Path outDir) throws IOException {
         String pkFieldName = schema.primaryKey.partitionKey;
         String skFieldName = schema.primaryKey.sortKey;
         boolean hasSortKey = skFieldName != null && !skFieldName.isEmpty();
 
+        String pkCodeName = resolveKeyCodeName(schema, pkFieldName);
+        String skCodeName = hasSortKey ? resolveKeyCodeName(schema, skFieldName) : null;
+
         TypeSpec.Builder tb = TypeSpec.classBuilder(entityName)
             .addModifiers(Modifier.PUBLIC)
-            // Lombok annotations
             .addAnnotation(LOMBOK_DATA)
             .addAnnotation(LOMBOK_BUILDER)
             .addAnnotation(LOMBOK_NO_ARGS_CONSTRUCTOR)
             .addAnnotation(LOMBOK_ALL_ARGS_CONSTRUCTOR)
-            // DynamoDB annotation
             .addAnnotation(DYNAMO_DB_BEAN);
 
-        // Add all fields from schema
+        // Add all fields from schema using resolved code names
         for (BprintSchema.Field field : schema.fields) {
+            String codeName = resolveCodeName(field);
             ClassName type = mapType(field.type);
-            tb.addField(FieldSpec.builder(type, field.name, Modifier.PRIVATE).build());
+
+            FieldSpec.Builder fieldBuilder = FieldSpec.builder(type, codeName, Modifier.PRIVATE);
+
+            // Add @DynamoDbAttribute on non-key fields where code name differs from DynamoDB name
+            boolean isPk = field.name.equals(pkFieldName);
+            boolean isSk = hasSortKey && field.name.equals(skFieldName);
+            if (!isPk && !isSk && needsAttributeAnnotation(field, codeName)) {
+                fieldBuilder.addAnnotation(dynamoDbAttributeAnnotation(field.name));
+            }
+
+            tb.addField(fieldBuilder.build());
         }
 
         // Generate explicit getter for partition key with @DynamoDbPartitionKey
-        String pkGetterName = "get" + cap(pkFieldName);
+        String pkGetterName = "get" + cap(pkCodeName);
         ClassName pkType = findFieldType(schema, pkFieldName);
-        tb.addMethod(MethodSpec.methodBuilder(pkGetterName)
+        MethodSpec.Builder pkGetter = MethodSpec.methodBuilder(pkGetterName)
             .addModifiers(Modifier.PUBLIC)
             .addAnnotation(DYNAMO_DB_PARTITION_KEY)
             .returns(pkType)
-            .addStatement("return $L", pkFieldName)
-            .build());
+            .addStatement("return $L", pkCodeName);
+
+        // Add @DynamoDbAttribute on PK getter if code name differs
+        if (!pkCodeName.equals(pkFieldName)) {
+            pkGetter.addAnnotation(dynamoDbAttributeAnnotation(pkFieldName));
+        }
+        tb.addMethod(pkGetter.build());
 
         // Generate explicit getter for sort key with @DynamoDbSortKey (if defined)
         if (hasSortKey) {
-            String skGetterName = "get" + cap(skFieldName);
+            String skGetterName = "get" + cap(skCodeName);
             ClassName skType = findFieldType(schema, skFieldName);
-            tb.addMethod(MethodSpec.methodBuilder(skGetterName)
+            MethodSpec.Builder skGetter = MethodSpec.methodBuilder(skGetterName)
                 .addModifiers(Modifier.PUBLIC)
                 .addAnnotation(DYNAMO_DB_SORT_KEY)
                 .returns(skType)
-                .addStatement("return $L", skFieldName)
-                .build());
-        }
+                .addStatement("return $L", skCodeName);
 
-        // All other getters/setters are generated by Lombok @Data
+            if (!skCodeName.equals(skFieldName)) {
+                skGetter.addAnnotation(dynamoDbAttributeAnnotation(skFieldName));
+            }
+            tb.addMethod(skGetter.build());
+        }
 
         JavaFile.builder(pkg, tb.build())
             .skipJavaLangImports(true)
@@ -174,15 +333,19 @@ public class JavaGenerator {
                 return mapType(field.type);
             }
         }
-        // Default to String if not found (shouldn't happen with valid schemas)
         return ClassName.get(String.class);
     }
+
+    // =========================================================================
+    // Keys Helper Generation
+    // =========================================================================
 
     /**
      * Generate key constants helper.
      * 
-     * Provides constants for the partition key and sort key field names,
-     * plus a convenience method to build DynamoDB Key objects.
+     * PARTITION_KEY_FIELD and SORT_KEY_FIELD constants contain the original
+     * DynamoDB attribute names (used for queries). Method parameter names
+     * use the resolved Java code names for readability.
      */
     private void generateEntityKeys(BprintSchema schema, String entityName, String pkg, Path outDir) throws IOException {
         String keysClassName = entityName + "Keys";
@@ -190,6 +353,9 @@ public class JavaGenerator {
         String pkFieldName = schema.primaryKey.partitionKey;
         String skFieldName = schema.primaryKey.sortKey;
         boolean hasSortKey = skFieldName != null && !skFieldName.isEmpty();
+
+        String pkCodeName = resolveKeyCodeName(schema, pkFieldName);
+        String skCodeName = hasSortKey ? resolveKeyCodeName(schema, skFieldName) : null;
 
         TypeSpec.Builder tb = TypeSpec.classBuilder(keysClassName)
             .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
@@ -202,44 +368,42 @@ public class JavaGenerator {
             .addModifiers(Modifier.PRIVATE)
             .build());
 
-        // PARTITION_KEY_FIELD constant
+        // PARTITION_KEY_FIELD constant - uses original DynamoDB attribute name
         tb.addField(FieldSpec.builder(String.class, "PARTITION_KEY_FIELD", Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
             .initializer("$S", pkFieldName)
-            .addJavadoc("The field name used as partition key.\n")
+            .addJavadoc("The DynamoDB attribute name used as partition key.\n")
             .build());
 
-        // SORT_KEY_FIELD constant (if defined)
+        // SORT_KEY_FIELD constant (if defined) - uses original DynamoDB attribute name
         if (hasSortKey) {
             tb.addField(FieldSpec.builder(String.class, "SORT_KEY_FIELD", Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
                 .initializer("$S", skFieldName)
-                .addJavadoc("The field name used as sort key.\n")
+                .addJavadoc("The DynamoDB attribute name used as sort key.\n")
                 .build());
         }
 
-        // key() method - build DynamoDB Key object from field values
+        // key() method - parameter names use resolved code names for readability
         if (hasSortKey) {
-            // With sort key
             tb.addMethod(MethodSpec.methodBuilder("key")
                 .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
                 .addJavadoc("Build a Key object for DynamoDB operations.\n")
-                .addJavadoc("@param $L partition key value\n", pkFieldName)
-                .addJavadoc("@param $L sort key value\n", skFieldName)
-                .addParameter(String.class, pkFieldName)
-                .addParameter(String.class, skFieldName)
+                .addJavadoc("@param $L partition key value\n", pkCodeName)
+                .addJavadoc("@param $L sort key value\n", skCodeName)
+                .addParameter(String.class, pkCodeName)
+                .addParameter(String.class, skCodeName)
                 .returns(KEY)
                 .addStatement("return $T.builder()\n.partitionValue($L)\n.sortValue($L)\n.build()", 
-                    KEY, pkFieldName, skFieldName)
+                    KEY, pkCodeName, skCodeName)
                 .build());
         } else {
-            // Without sort key
             tb.addMethod(MethodSpec.methodBuilder("key")
                 .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
                 .addJavadoc("Build a Key object for DynamoDB operations.\n")
-                .addJavadoc("@param $L partition key value\n", pkFieldName)
-                .addParameter(String.class, pkFieldName)
+                .addJavadoc("@param $L partition key value\n", pkCodeName)
+                .addParameter(String.class, pkCodeName)
                 .returns(KEY)
                 .addStatement("return $T.builder()\n.partitionValue($L)\n.build()", 
-                    KEY, pkFieldName)
+                    KEY, pkCodeName)
                 .build());
         }
 
@@ -249,17 +413,22 @@ public class JavaGenerator {
             .writeTo(outDir);
     }
 
+    // =========================================================================
+    // Repository Generation
+    // =========================================================================
+
     /**
      * Generate entity-specific repository with key-based operations.
-     * 
-     * Uses the schema-defined partition key and sort key fields directly.
-     * No scan() by default - only explicit access patterns.
+     * Uses resolved code names for method parameter names.
      */
     private void generateRepository(BprintSchema schema, String entityName, String pkg, Path outDir) throws IOException {
         String repoClassName = entityName + "Repository";
         String pkFieldName = schema.primaryKey.partitionKey;
         String skFieldName = schema.primaryKey.sortKey;
         boolean hasSortKey = skFieldName != null && !skFieldName.isEmpty();
+
+        String pkCodeName = resolveKeyCodeName(schema, pkFieldName);
+        String skCodeName = hasSortKey ? resolveKeyCodeName(schema, skFieldName) : null;
         
         ClassName entityClass = ClassName.get(pkg, entityName);
         ClassName keysClass = ClassName.get(pkg + ".keys", entityName + "Keys");
@@ -286,7 +455,7 @@ public class JavaGenerator {
                 TABLE_SCHEMA, entityClass)
             .build());
 
-        // Constructor for DI/testing - accepts existing enhanced client
+        // Constructor for DI/testing
         tb.addMethod(MethodSpec.constructorBuilder()
             .addModifiers(Modifier.PUBLIC)
             .addJavadoc("Constructor for dependency injection and testing.\n")
@@ -304,56 +473,54 @@ public class JavaGenerator {
             .addStatement("table.putItem(entity)")
             .build());
 
-        // findByKey() method - uses schema-defined keys
+        // findByKey() and deleteByKey() - use resolved code names for parameter names
         if (hasSortKey) {
-            // With sort key - need both PK and SK
             tb.addMethod(MethodSpec.methodBuilder("findByKey")
                 .addModifiers(Modifier.PUBLIC)
                 .addJavadoc("Find entity by partition key and sort key.\n")
-                .addParameter(String.class, pkFieldName)
-                .addParameter(String.class, skFieldName)
+                .addParameter(String.class, pkCodeName)
+                .addParameter(String.class, skCodeName)
                 .returns(optionalEntity)
-                .addStatement("$T key = $T.key($L, $L)", KEY, keysClass, pkFieldName, skFieldName)
+                .addStatement("$T key = $T.key($L, $L)", KEY, keysClass, pkCodeName, skCodeName)
                 .addStatement("return $T.ofNullable(table.getItem(key))", ClassName.get("java.util", "Optional"))
                 .build());
 
-            // deleteByKey() method
             tb.addMethod(MethodSpec.methodBuilder("deleteByKey")
                 .addModifiers(Modifier.PUBLIC)
                 .addJavadoc("Delete entity by partition key and sort key.\n")
-                .addParameter(String.class, pkFieldName)
-                .addParameter(String.class, skFieldName)
-                .addStatement("$T key = $T.key($L, $L)", KEY, keysClass, pkFieldName, skFieldName)
+                .addParameter(String.class, pkCodeName)
+                .addParameter(String.class, skCodeName)
+                .addStatement("$T key = $T.key($L, $L)", KEY, keysClass, pkCodeName, skCodeName)
                 .addStatement("table.deleteItem(key)")
                 .build());
         } else {
-            // Without sort key - just PK
             tb.addMethod(MethodSpec.methodBuilder("findByKey")
                 .addModifiers(Modifier.PUBLIC)
                 .addJavadoc("Find entity by partition key.\n")
-                .addParameter(String.class, pkFieldName)
+                .addParameter(String.class, pkCodeName)
                 .returns(optionalEntity)
-                .addStatement("$T key = $T.key($L)", KEY, keysClass, pkFieldName)
+                .addStatement("$T key = $T.key($L)", KEY, keysClass, pkCodeName)
                 .addStatement("return $T.ofNullable(table.getItem(key))", ClassName.get("java.util", "Optional"))
                 .build());
 
-            // deleteByKey() method
             tb.addMethod(MethodSpec.methodBuilder("deleteByKey")
                 .addModifiers(Modifier.PUBLIC)
                 .addJavadoc("Delete entity by partition key.\n")
-                .addParameter(String.class, pkFieldName)
-                .addStatement("$T key = $T.key($L)", KEY, keysClass, pkFieldName)
+                .addParameter(String.class, pkCodeName)
+                .addStatement("$T key = $T.key($L)", KEY, keysClass, pkCodeName)
                 .addStatement("table.deleteItem(key)")
                 .build());
         }
-
-        // NOTE: No findAll() or scan() generated by default
 
         JavaFile.builder(pkg + ".repository", tb.build())
             .skipJavaLangImports(true)
             .build()
             .writeTo(outDir);
     }
+
+    // =========================================================================
+    // Shared Infrastructure Generation (unchanged)
+    // =========================================================================
 
     /**
      * Generate DI-friendly DynamoDB client wrapper with builder pattern.
@@ -364,11 +531,9 @@ public class JavaGenerator {
             .addJavadoc("DI-friendly DynamoDB Enhanced Client wrapper.\n")
             .addJavadoc("Supports builder pattern, endpoint override, and client injection.\n");
 
-        // Fields
         tb.addField(FieldSpec.builder(DYNAMO_DB_ENHANCED_CLIENT, "enhancedClient", Modifier.PRIVATE, Modifier.FINAL).build());
         tb.addField(FieldSpec.builder(String.class, "tableName", Modifier.PRIVATE, Modifier.FINAL).build());
 
-        // Private constructor
         tb.addMethod(MethodSpec.constructorBuilder()
             .addModifiers(Modifier.PRIVATE)
             .addParameter(DYNAMO_DB_ENHANCED_CLIENT, "enhancedClient")
@@ -377,21 +542,18 @@ public class JavaGenerator {
             .addStatement("this.tableName = tableName")
             .build());
 
-        // getEnhancedClient()
         tb.addMethod(MethodSpec.methodBuilder("getEnhancedClient")
             .addModifiers(Modifier.PUBLIC)
             .returns(DYNAMO_DB_ENHANCED_CLIENT)
             .addStatement("return enhancedClient")
             .build());
 
-        // getTableName()
         tb.addMethod(MethodSpec.methodBuilder("getTableName")
             .addModifiers(Modifier.PUBLIC)
             .returns(String.class)
             .addStatement("return tableName")
             .build());
 
-        // Static builder() factory
         ClassName builderClass = ClassName.get(pkg + ".client", "ChaimDynamoDbClient", "Builder");
         tb.addMethod(MethodSpec.methodBuilder("builder")
             .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
@@ -400,7 +562,6 @@ public class JavaGenerator {
             .addStatement("return new Builder()")
             .build());
 
-        // Static wrap() factory for DI
         ClassName clientClass = ClassName.get(pkg + ".client", "ChaimDynamoDbClient");
         tb.addMethod(MethodSpec.methodBuilder("wrap")
             .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
@@ -411,7 +572,6 @@ public class JavaGenerator {
             .addStatement("return new $T(client, tableName)", clientClass)
             .build());
 
-        // Inner Builder class
         TypeSpec.Builder builderBuilder = TypeSpec.classBuilder("Builder")
             .addModifiers(Modifier.PUBLIC, Modifier.STATIC);
 
@@ -455,7 +615,6 @@ public class JavaGenerator {
             .addStatement("return this")
             .build());
 
-        // build() method
         builderBuilder.addMethod(MethodSpec.methodBuilder("build")
             .addModifiers(Modifier.PUBLIC)
             .returns(clientClass)
@@ -480,7 +639,6 @@ public class JavaGenerator {
             .addStatement("return new $T(enhanced, resolvedTable)", clientClass)
             .build());
 
-        // resolve() helper method
         builderBuilder.addMethod(MethodSpec.methodBuilder("resolve")
             .addModifiers(Modifier.PRIVATE)
             .addParameter(String.class, "value")
@@ -518,7 +676,6 @@ public class JavaGenerator {
             .addModifiers(Modifier.PUBLIC)
             .addJavadoc("Configuration class with table constants and repository factories.\n");
 
-        // Constants from CDK metadata
         tb.addField(FieldSpec.builder(String.class, "TABLE_NAME", Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
             .initializer("$S", tableMetadata.tableName())
             .build());
@@ -531,11 +688,9 @@ public class JavaGenerator {
             .initializer("$S", tableMetadata.region())
             .build());
 
-        // Shared client field (volatile for thread-safety)
         tb.addField(FieldSpec.builder(clientClass, "sharedClient", Modifier.PRIVATE, Modifier.STATIC, Modifier.VOLATILE)
             .build());
 
-        // getClient() - lazy singleton with double-checked locking
         tb.addMethod(MethodSpec.methodBuilder("getClient")
             .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
             .addJavadoc("Get or create the shared client (lazy singleton).\n")
@@ -550,7 +705,6 @@ public class JavaGenerator {
             .addStatement("return sharedClient")
             .build());
 
-        // clientBuilder() - for custom configuration
         tb.addMethod(MethodSpec.methodBuilder("clientBuilder")
             .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
             .addJavadoc("Create a custom client builder (for testing or custom config).\n")
@@ -558,19 +712,16 @@ public class JavaGenerator {
             .addStatement("return $T.builder()\n.tableName(TABLE_NAME)\n.region(REGION)", clientClass)
             .build());
 
-        // Repository factory methods for each entity
         for (String entityName : entityNames) {
             String methodName = uncap(entityName) + "Repository";
             ClassName repoClass = ClassName.get(pkg + ".repository", entityName + "Repository");
 
-            // Factory with default client
             tb.addMethod(MethodSpec.methodBuilder(methodName)
                 .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
                 .returns(repoClass)
                 .addStatement("return new $T(getClient())", repoClass)
                 .build());
 
-            // Factory with custom client
             tb.addMethod(MethodSpec.methodBuilder(methodName)
                 .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
                 .addParameter(clientClass, "client")
@@ -584,6 +735,10 @@ public class JavaGenerator {
             .build()
             .writeTo(outDir);
     }
+
+    // =========================================================================
+    // Utility Methods
+    // =========================================================================
 
     private static ClassName mapType(String type) {
         return switch (type) {

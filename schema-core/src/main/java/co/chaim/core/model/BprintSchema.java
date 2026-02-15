@@ -23,6 +23,7 @@ public class BprintSchema {
   @JsonIgnoreProperties(ignoreUnknown = true)
   public static class Field {
     public String name;
+    public String nameOverride;
     public String type;
     public boolean required;
     public String description;

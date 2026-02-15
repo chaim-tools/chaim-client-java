@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
@@ -397,5 +398,322 @@ public class JavaGeneratorTest {
     
     String keysContent = Files.readString(out.resolve("com/example/model/keys/EntityKeys.java"));
     assertThat(keysContent).contains("PARTITION_KEY_FIELD = \"productId\"");
+  }
+
+  // =========================================================================
+  // nameOverride and auto-conversion tests
+  // =========================================================================
+
+  @Test
+  void generatesEntityWithHyphenatedFieldNames() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Order entity with hyphenated fields";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "order-id";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "order-id";
+    orderId.type = "string";
+    orderId.required = true;
+
+    BprintSchema.Field orderDate = new BprintSchema.Field();
+    orderDate.name = "order-date";
+    orderDate.type = "timestamp";
+    orderDate.required = true;
+
+    BprintSchema.Field customerId = new BprintSchema.Field();
+    customerId.name = "customerId";
+    customerId.type = "string";
+    customerId.required = true;
+
+    schema.fields = List.of(orderId, orderDate, customerId);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    Path file = out.resolve("com/example/model/Order.java");
+    assertThat(Files.exists(file)).isTrue();
+
+    String content = Files.readString(file);
+
+    // Hyphenated fields should be auto-converted to camelCase
+    assertThat(content).contains("private String orderId");
+    assertThat(content).contains("private Instant orderDate");
+    assertThat(content).contains("private String customerId");
+
+    // Should NOT contain the raw hyphenated names as Java fields
+    assertThat(content).doesNotContain("private String order-id");
+    assertThat(content).doesNotContain("private Instant order-date");
+
+    // Auto-converted fields need @DynamoDbAttribute annotation
+    assertThat(content).contains("@DynamoDbAttribute(\"order-id\")");
+    assertThat(content).contains("@DynamoDbAttribute(\"order-date\")");
+
+    // Clean field should NOT have @DynamoDbAttribute
+    // customerId maps to customerId - no annotation needed
+    assertThat(content).doesNotContain("@DynamoDbAttribute(\"customerId\")");
+
+    // PK getter should have both @DynamoDbPartitionKey and @DynamoDbAttribute
+    assertThat(content).contains("@DynamoDbPartitionKey");
+    assertThat(content).contains("public String getOrderId()");
+  }
+
+  @Test
+  void generatesEntityWithNameOverride() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Order with nameOverride";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "orderId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "orderId";
+    orderId.type = "string";
+    orderId.required = true;
+
+    BprintSchema.Field tfa = new BprintSchema.Field();
+    tfa.name = "2fa-verified";
+    tfa.nameOverride = "twoFactorVerified";
+    tfa.type = "boolean";
+    tfa.required = false;
+
+    schema.fields = List.of(orderId, tfa);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Order.java"));
+
+    // nameOverride should be used as the Java field name
+    assertThat(content).contains("private Boolean twoFactorVerified");
+
+    // @DynamoDbAttribute should map back to the original DynamoDB name
+    assertThat(content).contains("@DynamoDbAttribute(\"2fa-verified\")");
+
+    // Clean field should NOT have @DynamoDbAttribute
+    assertThat(content).doesNotContain("@DynamoDbAttribute(\"orderId\")");
+    assertThat(content).contains("private String orderId");
+  }
+
+  @Test
+  void generatesEntityWithCleanName_noAnnotation() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Customer";
+    schema.description = "Clean field names";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "customerId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field custId = new BprintSchema.Field();
+    custId.name = "customerId";
+    custId.type = "string";
+    custId.required = true;
+
+    BprintSchema.Field email = new BprintSchema.Field();
+    email.name = "email";
+    email.type = "string";
+    email.required = true;
+
+    schema.fields = List.of(custId, email);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Customer.java"));
+
+    // Clean names should NOT have @DynamoDbAttribute at all
+    assertThat(content).doesNotContain("@DynamoDbAttribute");
+    assertThat(content).contains("private String customerId");
+    assertThat(content).contains("private String email");
+  }
+
+  @Test
+  void detectsCollisionBetweenAutoConvertedNames() {
+    // Two fields that resolve to the same Java identifier should throw
+    BprintSchema.Field field1 = new BprintSchema.Field();
+    field1.name = "order-date";
+    field1.type = "string";
+
+    BprintSchema.Field field2 = new BprintSchema.Field();
+    field2.name = "orderDate";
+    field2.type = "string";
+
+    List<BprintSchema.Field> fields = new ArrayList<>();
+    fields.add(field1);
+    fields.add(field2);
+
+    assertThatThrownBy(() -> JavaGenerator.detectCollisions(fields))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("Name collision")
+        .hasMessageContaining("order-date")
+        .hasMessageContaining("orderDate");
+  }
+
+  @Test
+  void generatesEntityWithMixedFieldNames() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Mixed field names";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "order-id";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "order-id";
+    orderId.type = "string";
+    orderId.required = true;
+
+    BprintSchema.Field orderDate = new BprintSchema.Field();
+    orderDate.name = "order-date";
+    orderDate.type = "timestamp";
+    orderDate.required = true;
+
+    BprintSchema.Field tfa = new BprintSchema.Field();
+    tfa.name = "2fa-verified";
+    tfa.nameOverride = "twoFactorVerified";
+    tfa.type = "boolean";
+    tfa.required = false;
+
+    BprintSchema.Field customerId = new BprintSchema.Field();
+    customerId.name = "customerId";
+    customerId.type = "string";
+    customerId.required = true;
+
+    schema.fields = List.of(orderId, orderDate, tfa, customerId);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Order.java"));
+
+    // Auto-converted: order-id -> orderId with annotation
+    assertThat(content).contains("private String orderId");
+    assertThat(content).contains("@DynamoDbAttribute(\"order-id\")");
+
+    // Auto-converted: order-date -> orderDate with annotation
+    assertThat(content).contains("private Instant orderDate");
+    assertThat(content).contains("@DynamoDbAttribute(\"order-date\")");
+
+    // nameOverride: 2fa-verified -> twoFactorVerified with annotation
+    assertThat(content).contains("private Boolean twoFactorVerified");
+    assertThat(content).contains("@DynamoDbAttribute(\"2fa-verified\")");
+
+    // Clean: customerId -> customerId, no annotation
+    assertThat(content).contains("private String customerId");
+    assertThat(content).doesNotContain("@DynamoDbAttribute(\"customerId\")");
+  }
+
+  @Test
+  void toJavaCamelCaseConvertsCorrectly() {
+    // Hyphens trigger camelCase
+    assertThat(JavaGenerator.toJavaCamelCase("order-date")).isEqualTo("orderDate");
+    assertThat(JavaGenerator.toJavaCamelCase("user-id")).isEqualTo("userId");
+
+    // Underscores trigger camelCase
+    assertThat(JavaGenerator.toJavaCamelCase("order_date")).isEqualTo("orderDate");
+
+    // Leading digits get underscore prefix
+    assertThat(JavaGenerator.toJavaCamelCase("2fa-enabled")).isEqualTo("_2faEnabled");
+
+    // All-caps lowered
+    assertThat(JavaGenerator.toJavaCamelCase("TTL")).isEqualTo("ttl");
+
+    // Already valid identifier stays as-is via resolveCodeName
+    BprintSchema.Field cleanField = new BprintSchema.Field();
+    cleanField.name = "customerId";
+    cleanField.type = "string";
+    assertThat(JavaGenerator.resolveCodeName(cleanField)).isEqualTo("customerId");
+  }
+
+  @Test
+  void resolveCodeNameUsesNameOverrideWhenSet() {
+    BprintSchema.Field field = new BprintSchema.Field();
+    field.name = "2fa-verified";
+    field.nameOverride = "twoFactorVerified";
+    field.type = "boolean";
+
+    assertThat(JavaGenerator.resolveCodeName(field)).isEqualTo("twoFactorVerified");
+  }
+
+  @Test
+  void resolveCodeNameAutoConvertsWhenNoOverride() {
+    BprintSchema.Field field = new BprintSchema.Field();
+    field.name = "order-date";
+    field.type = "string";
+
+    assertThat(JavaGenerator.resolveCodeName(field)).isEqualTo("orderDate");
+  }
+
+  @Test
+  void keysHelperPreservesOriginalDynamoDbAttributeNames() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Order with hyphenated PK";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "order-id";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "order-id";
+    orderId.type = "string";
+    orderId.required = true;
+
+    schema.fields = List.of(orderId);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String keysContent = Files.readString(out.resolve("com/example/model/keys/OrderKeys.java"));
+
+    // Constants should use original DynamoDB attribute name
+    assertThat(keysContent).contains("PARTITION_KEY_FIELD = \"order-id\"");
+
+    // Method parameter should use resolved code name
+    assertThat(keysContent).contains("public static Key key(String orderId)");
+  }
+
+  @Test
+  void repositoryUsesResolvedCodeNamesForParameters() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Order with hyphenated PK";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "order-id";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "order-id";
+    orderId.type = "string";
+    orderId.required = true;
+
+    schema.fields = List.of(orderId);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String repoContent = Files.readString(out.resolve("com/example/model/repository/OrderRepository.java"));
+
+    // Parameters should use resolved code name, not raw hyphenated name
+    assertThat(repoContent).contains("findByKey(String orderId)");
+    assertThat(repoContent).contains("deleteByKey(String orderId)");
+
+    // Method signatures should not use hyphenated names as parameter names
+    assertThat(repoContent).doesNotContain("findByKey(String order-id)");
+    assertThat(repoContent).doesNotContain("deleteByKey(String order-id)");
   }
 }
