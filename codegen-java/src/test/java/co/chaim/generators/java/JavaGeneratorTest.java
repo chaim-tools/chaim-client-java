@@ -716,4 +716,891 @@ public class JavaGeneratorTest {
     assertThat(repoContent).doesNotContain("findByKey(String order-id)");
     assertThat(repoContent).doesNotContain("deleteByKey(String order-id)");
   }
+
+  // =========================================================================
+  // Constraint validation generation tests
+  // =========================================================================
+
+  @Test
+  void generatesChaimValidationException() throws Exception {
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(userSchema), "com.example.model", out, tableMetadata);
+
+    Path file = out.resolve("com/example/model/validation/ChaimValidationException.java");
+    assertThat(Files.exists(file)).isTrue();
+
+    String content = Files.readString(file);
+
+    // Check class structure
+    assertThat(content).contains("public class ChaimValidationException extends RuntimeException");
+
+    // Check FieldError inner class
+    assertThat(content).contains("public static class FieldError");
+    assertThat(content).contains("public String getFieldName()");
+    assertThat(content).contains("public String getConstraint()");
+    assertThat(content).contains("public String getMessage()");
+    assertThat(content).contains("public String toString()");
+
+    // Check constructor and getErrors
+    assertThat(content).contains("public ChaimValidationException(String entityName");
+    assertThat(content).contains("public List<FieldError> getErrors()");
+    assertThat(content).contains("Collections.unmodifiableList(errors)");
+  }
+
+  @Test
+  void generatesValidatorWithStringConstraints() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Customer";
+    schema.description = "Customer with string constraints";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "customerId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field custId = new BprintSchema.Field();
+    custId.name = "customerId";
+    custId.type = "string";
+    custId.required = true;
+    BprintSchema.Constraints custIdConstraints = new BprintSchema.Constraints();
+    custIdConstraints.minLength = 1;
+    custIdConstraints.maxLength = 64;
+    custId.constraints = custIdConstraints;
+
+    BprintSchema.Field email = new BprintSchema.Field();
+    email.name = "email";
+    email.type = "string";
+    email.required = true;
+    BprintSchema.Constraints emailConstraints = new BprintSchema.Constraints();
+    emailConstraints.minLength = 5;
+    emailConstraints.maxLength = 254;
+    emailConstraints.pattern = "^[^@]+@[^@]+\\.[^@]+$";
+    email.constraints = emailConstraints;
+
+    schema.fields = List.of(custId, email);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    Path file = out.resolve("com/example/model/validation/CustomerValidator.java");
+    assertThat(Files.exists(file)).isTrue();
+
+    String content = Files.readString(file);
+
+    // Check class structure
+    assertThat(content).contains("public final class CustomerValidator");
+    assertThat(content).contains("public static void validate(Customer entity)");
+
+    // Check string minLength constraint
+    assertThat(content).contains("entity.getCustomerId().length() < 1");
+    assertThat(content).contains("\"customerId\"");
+    assertThat(content).contains("\"minLength\"");
+
+    // Check string maxLength constraint
+    assertThat(content).contains("entity.getCustomerId().length() > 64");
+    assertThat(content).contains("\"maxLength\"");
+
+    // Check email pattern constraint
+    assertThat(content).contains("entity.getEmail().matches(");
+    assertThat(content).contains("\"pattern\"");
+
+    // Check null-safety
+    assertThat(content).contains("entity.getCustomerId() != null");
+    assertThat(content).contains("entity.getEmail() != null");
+
+    // Check error collection and throw
+    assertThat(content).contains("new ArrayList<>()");
+    assertThat(content).contains("if (!errors.isEmpty())");
+    assertThat(content).contains("throw new ChaimValidationException(\"Customer\", errors)");
+  }
+
+  @Test
+  void generatesValidatorWithNumberConstraints() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Product";
+    schema.description = "Product with number constraints";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "productId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field prodId = new BprintSchema.Field();
+    prodId.name = "productId";
+    prodId.type = "string";
+    prodId.required = true;
+
+    BprintSchema.Field price = new BprintSchema.Field();
+    price.name = "price";
+    price.type = "number";
+    price.required = true;
+    BprintSchema.Constraints priceConstraints = new BprintSchema.Constraints();
+    priceConstraints.min = 0.0;
+    priceConstraints.max = 999999.99;
+    price.constraints = priceConstraints;
+
+    BprintSchema.Field quantity = new BprintSchema.Field();
+    quantity.name = "quantity";
+    quantity.type = "number";
+    quantity.required = false;
+    BprintSchema.Constraints qtyConstraints = new BprintSchema.Constraints();
+    qtyConstraints.min = 0.0;
+    qtyConstraints.max = 10000.0;
+    quantity.constraints = qtyConstraints;
+
+    schema.fields = List.of(prodId, price, quantity);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    Path file = out.resolve("com/example/model/validation/ProductValidator.java");
+    assertThat(Files.exists(file)).isTrue();
+
+    String content = Files.readString(file);
+
+    // Check number min/max for price
+    assertThat(content).contains("entity.getPrice() != null");
+    assertThat(content).contains("entity.getPrice() < 0.0");
+    assertThat(content).contains("entity.getPrice() > 999999.99");
+    assertThat(content).contains("\"price\"");
+    assertThat(content).contains("\"min\"");
+    assertThat(content).contains("\"max\"");
+
+    // Check number min/max for quantity
+    assertThat(content).contains("entity.getQuantity() != null");
+    assertThat(content).contains("entity.getQuantity() < 0.0");
+    assertThat(content).contains("entity.getQuantity() > 10000.0");
+  }
+
+  @Test
+  void generatesValidatorWithMixedConstraints() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "User";
+    schema.description = "User with mixed constraints";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "userId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field userId = new BprintSchema.Field();
+    userId.name = "userId";
+    userId.type = "string";
+    userId.required = true;
+    BprintSchema.Constraints userIdConstraints = new BprintSchema.Constraints();
+    userIdConstraints.minLength = 1;
+    userIdConstraints.maxLength = 64;
+    userId.constraints = userIdConstraints;
+
+    BprintSchema.Field email = new BprintSchema.Field();
+    email.name = "email";
+    email.type = "string";
+    email.required = true;
+    BprintSchema.Constraints emailConstraints = new BprintSchema.Constraints();
+    emailConstraints.minLength = 5;
+    emailConstraints.maxLength = 254;
+    emailConstraints.pattern = "^[^@]+@[^@]+\\.[^@]+$";
+    email.constraints = emailConstraints;
+
+    BprintSchema.Field age = new BprintSchema.Field();
+    age.name = "age";
+    age.type = "number";
+    age.required = false;
+    BprintSchema.Constraints ageConstraints = new BprintSchema.Constraints();
+    ageConstraints.min = 0.0;
+    ageConstraints.max = 150.0;
+    age.constraints = ageConstraints;
+
+    schema.fields = List.of(userId, email, age);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/validation/UserValidator.java"));
+
+    // String constraints present
+    assertThat(content).contains("entity.getUserId().length() < 1");
+    assertThat(content).contains("entity.getEmail().matches(");
+
+    // Number constraints present
+    assertThat(content).contains("entity.getAge() < 0.0");
+    assertThat(content).contains("entity.getAge() > 150.0");
+
+    // All use original field names in error messages
+    assertThat(content).contains("\"userId\"");
+    assertThat(content).contains("\"email\"");
+    assertThat(content).contains("\"age\"");
+  }
+
+  @Test
+  void generatesValidatorWithNoValidation() throws Exception {
+    // Schema where fields are NOT required, have no constraints, and no enum
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Simple";
+    schema.description = "Simple entity with no validation rules";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "id";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field idField = new BprintSchema.Field();
+    idField.name = "id";
+    idField.type = "string";
+
+    BprintSchema.Field nameField = new BprintSchema.Field();
+    nameField.name = "name";
+    nameField.type = "string";
+
+    schema.fields = List.of(idField, nameField);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    Path file = out.resolve("com/example/model/validation/SimpleValidator.java");
+    assertThat(Files.exists(file)).isTrue();
+
+    String content = Files.readString(file);
+
+    // Validator class exists
+    assertThat(content).contains("public final class SimpleValidator");
+    assertThat(content).contains("public static void validate(Simple entity)");
+
+    // No validation logic should be present
+    assertThat(content).doesNotContain("new ArrayList<>()");
+    assertThat(content).doesNotContain("errors.add");
+    assertThat(content).doesNotContain("throw new ChaimValidationException");
+  }
+
+  @Test
+  void generatesValidatorWithPartialConstraints() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Account";
+    schema.description = "Account with partial constraints";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "accountId";
+    schema.primaryKey = pk;
+
+    // accountId: not required, no constraints -> no validation
+    BprintSchema.Field accountId = new BprintSchema.Field();
+    accountId.name = "accountId";
+    accountId.type = "string";
+
+    // name: not required but has constraints -> constraint checks only
+    BprintSchema.Field name = new BprintSchema.Field();
+    name.name = "name";
+    name.type = "string";
+    BprintSchema.Constraints nameConstraints = new BprintSchema.Constraints();
+    nameConstraints.minLength = 1;
+    nameConstraints.maxLength = 100;
+    name.constraints = nameConstraints;
+
+    // isActive: not required, no constraints -> no validation
+    BprintSchema.Field isActive = new BprintSchema.Field();
+    isActive.name = "isActive";
+    isActive.type = "boolean";
+
+    schema.fields = List.of(accountId, name, isActive);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/validation/AccountValidator.java"));
+
+    // Only 'name' field should have constraint checks
+    assertThat(content).contains("entity.getName().length() < 1");
+    assertThat(content).contains("entity.getName().length() > 100");
+
+    // Non-constrained, non-required fields should not appear in validation
+    assertThat(content).doesNotContain("getAccountId()");
+    assertThat(content).doesNotContain("getIsActive()");
+  }
+
+  @Test
+  void repositorySaveCallsValidator() throws Exception {
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(userSchema), "com.example.model", out, tableMetadata);
+
+    String repoContent = Files.readString(out.resolve("com/example/model/repository/UserRepository.java"));
+
+    // save() should call validator before putItem
+    assertThat(repoContent).contains("UserValidator.validate(entity)");
+    assertThat(repoContent).contains("table.putItem(entity)");
+
+    // Validator call should come before putItem (check ordering)
+    int validateIndex = repoContent.indexOf("UserValidator.validate(entity)");
+    int putItemIndex = repoContent.indexOf("table.putItem(entity)");
+    assertThat(validateIndex).isLessThan(putItemIndex);
+
+    // Repository should import the validator
+    assertThat(repoContent).contains("import com.example.model.validation.UserValidator");
+  }
+
+  @Test
+  void validatorUsesOriginalFieldNameInErrors() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Order with nameOverride and constraints";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "orderId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "orderId";
+    orderId.type = "string";
+    orderId.required = true;
+
+    BprintSchema.Field orderTotal = new BprintSchema.Field();
+    orderTotal.name = "order-total";
+    orderTotal.nameOverride = "orderTotal";
+    orderTotal.type = "number";
+    orderTotal.required = true;
+    BprintSchema.Constraints totalConstraints = new BprintSchema.Constraints();
+    totalConstraints.min = 0.0;
+    totalConstraints.max = 1000000.0;
+    orderTotal.constraints = totalConstraints;
+
+    schema.fields = List.of(orderId, orderTotal);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/validation/OrderValidator.java"));
+
+    // Getter uses resolved code name (from nameOverride)
+    assertThat(content).contains("entity.getOrderTotal()");
+
+    // Error message uses original DynamoDB attribute name
+    assertThat(content).contains("\"order-total\"");
+
+    // Should NOT use the resolved name in the error field name
+    // (the first argument to FieldError is the original DynamoDB name)
+  }
+
+  @Test
+  void validatorHandlesPatternWithSpecialChars() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Contact";
+    schema.description = "Contact with complex pattern";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "contactId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field contactId = new BprintSchema.Field();
+    contactId.name = "contactId";
+    contactId.type = "string";
+    contactId.required = true;
+
+    BprintSchema.Field ssn = new BprintSchema.Field();
+    ssn.name = "ssn";
+    ssn.type = "string";
+    ssn.required = false;
+    BprintSchema.Constraints ssnConstraints = new BprintSchema.Constraints();
+    ssnConstraints.minLength = 9;
+    ssnConstraints.maxLength = 11;
+    ssnConstraints.pattern = "^[0-9]{3}-?[0-9]{2}-?[0-9]{4}$";
+    ssn.constraints = ssnConstraints;
+
+    schema.fields = List.of(contactId, ssn);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/validation/ContactValidator.java"));
+
+    // Pattern with special regex chars should be properly escaped as a Java string literal
+    assertThat(content).contains("entity.getSsn().matches(");
+    // Javapoet $S handles the escaping - check the pattern content is present
+    assertThat(content).contains("[0-9]{3}");
+    assertThat(content).contains("[0-9]{2}");
+    assertThat(content).contains("[0-9]{4}");
+
+    // minLength and maxLength also present
+    assertThat(content).contains("entity.getSsn().length() < 9");
+    assertThat(content).contains("entity.getSsn().length() > 11");
+  }
+
+  // =========================================================================
+  // Required field validation tests
+  // =========================================================================
+
+  @Test
+  void generatesValidatorWithRequiredFields() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Customer";
+    schema.description = "Customer with required fields";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "customerId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field custId = new BprintSchema.Field();
+    custId.name = "customerId";
+    custId.type = "string";
+    custId.required = true;
+
+    BprintSchema.Field email = new BprintSchema.Field();
+    email.name = "email";
+    email.type = "string";
+    email.required = true;
+
+    BprintSchema.Field nickname = new BprintSchema.Field();
+    nickname.name = "nickname";
+    nickname.type = "string";
+    // not required (default false)
+
+    schema.fields = List.of(custId, email, nickname);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/validation/CustomerValidator.java"));
+
+    // Required fields should have null checks
+    assertThat(content).contains("entity.getCustomerId() == null");
+    assertThat(content).contains("\"customerId\", \"required\", \"is required but was null\"");
+    assertThat(content).contains("entity.getEmail() == null");
+    assertThat(content).contains("\"email\", \"required\", \"is required but was null\"");
+
+    // Non-required field without constraints should NOT appear in validation
+    assertThat(content).doesNotContain("getNickname()");
+
+    // Error collection and throw
+    assertThat(content).contains("new ArrayList<>()");
+    assertThat(content).contains("throw new ChaimValidationException(\"Customer\", errors)");
+  }
+
+  @Test
+  void validatorAllowsNullOptionalField() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Profile";
+    schema.description = "Profile with optional fields";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "profileId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field profileId = new BprintSchema.Field();
+    profileId.name = "profileId";
+    profileId.type = "string";
+    profileId.required = true;
+
+    BprintSchema.Field bio = new BprintSchema.Field();
+    bio.name = "bio";
+    bio.type = "string";
+    // not required, no constraints
+
+    BprintSchema.Field website = new BprintSchema.Field();
+    website.name = "website";
+    website.type = "string";
+    // not required, no constraints
+
+    schema.fields = List.of(profileId, bio, website);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/validation/ProfileValidator.java"));
+
+    // Only profileId should have required check
+    assertThat(content).contains("entity.getProfileId() == null");
+    assertThat(content).contains("\"profileId\", \"required\"");
+
+    // Optional fields should NOT appear in validation
+    assertThat(content).doesNotContain("getBio()");
+    assertThat(content).doesNotContain("getWebsite()");
+  }
+
+  @Test
+  void validatorRequiredCheckComesBeforeConstraintChecks() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Account";
+    schema.description = "Account with required + constraints";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "accountId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field accountId = new BprintSchema.Field();
+    accountId.name = "accountId";
+    accountId.type = "string";
+    accountId.required = true;
+    BprintSchema.Constraints idConstraints = new BprintSchema.Constraints();
+    idConstraints.minLength = 5;
+    idConstraints.maxLength = 50;
+    accountId.constraints = idConstraints;
+
+    schema.fields = List.of(accountId);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/validation/AccountValidator.java"));
+
+    // Both required and constraint checks should be present
+    assertThat(content).contains("entity.getAccountId() == null");
+    assertThat(content).contains("\"required\"");
+    assertThat(content).contains("entity.getAccountId().length() < 5");
+    assertThat(content).contains("entity.getAccountId().length() > 50");
+
+    // Required check should come BEFORE constraint checks
+    int requiredIndex = content.indexOf("entity.getAccountId() == null");
+    int constraintIndex = content.indexOf("entity.getAccountId().length()");
+    assertThat(requiredIndex).isLessThan(constraintIndex);
+  }
+
+  // =========================================================================
+  // Default value tests
+  // =========================================================================
+
+  @Test
+  void generatesEntityWithStringDefault() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Settings";
+    schema.description = "Settings with string default";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "settingsId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field settingsId = new BprintSchema.Field();
+    settingsId.name = "settingsId";
+    settingsId.type = "string";
+
+    BprintSchema.Field currency = new BprintSchema.Field();
+    currency.name = "currency";
+    currency.type = "string";
+    currency.defaultValue = "USD";
+
+    BprintSchema.Field locale = new BprintSchema.Field();
+    locale.name = "locale";
+    locale.type = "string";
+    // no default
+
+    schema.fields = List.of(settingsId, currency, locale);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Settings.java"));
+
+    // Field with default should have @Builder.Default and initializer
+    assertThat(content).contains("@Builder.Default");
+    assertThat(content).contains("private String currency = \"USD\"");
+
+    // Field without default should NOT have @Builder.Default
+    assertThat(content).contains("private String locale;");
+    // settingsId should also not have @Builder.Default
+    assertThat(content).contains("private String settingsId;");
+  }
+
+  @Test
+  void generatesEntityWithBooleanDefault() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Feature";
+    schema.description = "Feature with boolean default";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "featureId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field featureId = new BprintSchema.Field();
+    featureId.name = "featureId";
+    featureId.type = "string";
+
+    BprintSchema.Field active = new BprintSchema.Field();
+    active.name = "active";
+    active.type = "boolean";
+    active.defaultValue = true;
+
+    BprintSchema.Field deprecated = new BprintSchema.Field();
+    deprecated.name = "deprecated";
+    deprecated.type = "boolean";
+    deprecated.defaultValue = false;
+
+    schema.fields = List.of(featureId, active, deprecated);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Feature.java"));
+
+    assertThat(content).contains("@Builder.Default");
+    assertThat(content).contains("private Boolean active = true");
+    assertThat(content).contains("private Boolean deprecated = false");
+  }
+
+  @Test
+  void generatesEntityWithNumberDefault() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Pricing";
+    schema.description = "Pricing with number default";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "pricingId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field pricingId = new BprintSchema.Field();
+    pricingId.name = "pricingId";
+    pricingId.type = "string";
+
+    BprintSchema.Field taxRate = new BprintSchema.Field();
+    taxRate.name = "taxRate";
+    taxRate.type = "number";
+    taxRate.defaultValue = 0.0;
+
+    BprintSchema.Field discount = new BprintSchema.Field();
+    discount.name = "discount";
+    discount.type = "number";
+    discount.defaultValue = 10.5;
+
+    schema.fields = List.of(pricingId, taxRate, discount);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Pricing.java"));
+
+    assertThat(content).contains("@Builder.Default");
+    assertThat(content).contains("private Double taxRate = 0.0");
+    assertThat(content).contains("private Double discount = 10.5");
+  }
+
+  @Test
+  void generatesEntityWithMixedDefaults() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Config";
+    schema.description = "Config with mixed defaults";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "configId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field configId = new BprintSchema.Field();
+    configId.name = "configId";
+    configId.type = "string";
+
+    BprintSchema.Field env = new BprintSchema.Field();
+    env.name = "env";
+    env.type = "string";
+    env.defaultValue = "production";
+
+    BprintSchema.Field retries = new BprintSchema.Field();
+    retries.name = "retries";
+    retries.type = "number";
+    retries.defaultValue = 3;
+
+    BprintSchema.Field enabled = new BprintSchema.Field();
+    enabled.name = "enabled";
+    enabled.type = "boolean";
+    enabled.defaultValue = true;
+
+    BprintSchema.Field label = new BprintSchema.Field();
+    label.name = "label";
+    label.type = "string";
+    // no default
+
+    schema.fields = List.of(configId, env, retries, enabled, label);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Config.java"));
+
+    // Fields with defaults
+    assertThat(content).contains("private String env = \"production\"");
+    assertThat(content).contains("private Boolean enabled = true");
+
+    // Fields without defaults - no @Builder.Default, no initializer
+    assertThat(content).contains("private String configId;");
+    assertThat(content).contains("private String label;");
+  }
+
+  // =========================================================================
+  // Enum validation tests
+  // =========================================================================
+
+  @Test
+  void generatesValidatorWithEnumValues() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Product";
+    schema.description = "Product with enum values";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "productId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field productId = new BprintSchema.Field();
+    productId.name = "productId";
+    productId.type = "string";
+
+    BprintSchema.Field category = new BprintSchema.Field();
+    category.name = "category";
+    category.type = "string";
+    category.enumValues = List.of("electronics", "clothing", "books");
+
+    schema.fields = List.of(productId, category);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/validation/ProductValidator.java"));
+
+    // Enum check should use Set.of with allowed values
+    assertThat(content).contains("Set.of(\"electronics\", \"clothing\", \"books\")");
+    assertThat(content).contains(".contains(entity.getCategory())");
+
+    // Error should reference original field name and "enum" constraint
+    assertThat(content).contains("\"category\"");
+    assertThat(content).contains("\"enum\"");
+    assertThat(content).contains("must be one of [electronics, clothing, books]");
+
+    // Null-safe
+    assertThat(content).contains("entity.getCategory() != null");
+  }
+
+  @Test
+  void generatesValidatorWithEnumAndConstraints() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Item";
+    schema.description = "Item with both enum and constraints";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "itemId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field itemId = new BprintSchema.Field();
+    itemId.name = "itemId";
+    itemId.type = "string";
+
+    BprintSchema.Field status = new BprintSchema.Field();
+    status.name = "status";
+    status.type = "string";
+    status.required = true;
+    status.enumValues = List.of("active", "inactive", "archived");
+    BprintSchema.Constraints statusConstraints = new BprintSchema.Constraints();
+    statusConstraints.minLength = 1;
+    statusConstraints.maxLength = 20;
+    status.constraints = statusConstraints;
+
+    schema.fields = List.of(itemId, status);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/validation/ItemValidator.java"));
+
+    // Required check
+    assertThat(content).contains("entity.getStatus() == null");
+    assertThat(content).contains("\"required\"");
+
+    // Constraint checks
+    assertThat(content).contains("entity.getStatus().length() < 1");
+    assertThat(content).contains("entity.getStatus().length() > 20");
+
+    // Enum check
+    assertThat(content).contains("Set.of(\"active\", \"inactive\", \"archived\")");
+
+    // Required comes before constraint, constraint before enum
+    int requiredIdx = content.indexOf("entity.getStatus() == null");
+    int constraintIdx = content.indexOf("entity.getStatus().length()");
+    int enumIdx = content.indexOf("Set.of(");
+    assertThat(requiredIdx).isLessThan(constraintIdx);
+    assertThat(constraintIdx).isLessThan(enumIdx);
+  }
+
+  // =========================================================================
+  // Description / Javadoc tests
+  // =========================================================================
+
+  @Test
+  void generatesEntityWithDescription() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Customer";
+    schema.description = "Customer entity";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "customerId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field custId = new BprintSchema.Field();
+    custId.name = "customerId";
+    custId.type = "string";
+    custId.description = "Unique customer identifier";
+
+    BprintSchema.Field email = new BprintSchema.Field();
+    email.name = "email";
+    email.type = "string";
+    email.description = "Customer email address";
+
+    BprintSchema.Field age = new BprintSchema.Field();
+    age.name = "age";
+    age.type = "number";
+    // no description
+
+    schema.fields = List.of(custId, email, age);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Customer.java"));
+
+    // Fields with description should have Javadoc
+    assertThat(content).contains("Unique customer identifier");
+    assertThat(content).contains("Customer email address");
+
+    // Field without description should NOT have Javadoc for it
+    // (age has no description, so its Javadoc should not appear)
+    assertThat(content).doesNotContain("age\n");
+  }
+
+  @Test
+  void generatesEntityWithoutDescription() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Minimal";
+    schema.description = "Minimal entity";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "id";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field id = new BprintSchema.Field();
+    id.name = "id";
+    id.type = "string";
+    // no description
+
+    BprintSchema.Field value = new BprintSchema.Field();
+    value.name = "value";
+    value.type = "string";
+    // no description
+
+    schema.fields = List.of(id, value);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Minimal.java"));
+
+    // No field-level Javadoc should be present (only class-level content from javapoet)
+    // Fields should be declared directly without preceding Javadoc comments
+    assertThat(content).contains("private String id;");
+    assertThat(content).contains("private String value;");
+  }
 }

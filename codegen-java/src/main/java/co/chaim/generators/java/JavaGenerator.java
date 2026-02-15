@@ -26,9 +26,11 @@ import java.util.regex.Pattern;
  * Generates:
  * - Entity DTOs with DynamoDB Enhanced Client annotations on schema-defined keys
  * - Key constants helper ({Entity}Keys.java) with field name references
- * - Entity-specific repositories with key-based operations
+ * - Entity-specific repositories with key-based operations (with auto-validation on save)
  * - Shared DI-friendly DynamoDB client (ChaimDynamoDbClient)
  * - Configuration with repository factory methods (ChaimConfig)
+ * - Shared ChaimValidationException for structured field-level errors
+ * - Per-entity {Entity}Validator with constraint checks from .bprint schema
  */
 public class JavaGenerator {
 
@@ -47,6 +49,7 @@ public class JavaGenerator {
     // Lombok annotation class names
     private static final ClassName LOMBOK_DATA = ClassName.get("lombok", "Data");
     private static final ClassName LOMBOK_BUILDER = ClassName.get("lombok", "Builder");
+    private static final ClassName LOMBOK_BUILDER_DEFAULT = ClassName.get("lombok", "Builder", "Default");
     private static final ClassName LOMBOK_NO_ARGS_CONSTRUCTOR = ClassName.get("lombok", "NoArgsConstructor");
     private static final ClassName LOMBOK_ALL_ARGS_CONSTRUCTOR = ClassName.get("lombok", "AllArgsConstructor");
     
@@ -91,11 +94,15 @@ public class JavaGenerator {
             generateChaimConfig(tableMetadata, pkg, entityNames, outDir);
         }
 
-        // 2. Generate entity + keys + repository for each schema
+        // 2. Generate shared validation exception ONCE
+        generateChaimValidationException(pkg, outDir);
+
+        // 3. Generate entity + keys + validator + repository for each schema
         for (BprintSchema schema : schemas) {
             String entityName = deriveEntityName(schema);
             generateEntity(schema, entityName, pkg, outDir);
             generateEntityKeys(schema, entityName, pkg, outDir);
+            generateValidator(schema, entityName, pkg, outDir);
             if (tableMetadata != null) {
                 generateRepository(schema, entityName, pkg, outDir);
             }
@@ -277,11 +284,22 @@ public class JavaGenerator {
 
             FieldSpec.Builder fieldBuilder = FieldSpec.builder(type, codeName, Modifier.PRIVATE);
 
+            // Add field description as Javadoc
+            if (field.description != null && !field.description.isEmpty()) {
+                fieldBuilder.addJavadoc("$L\n", field.description);
+            }
+
             // Add @DynamoDbAttribute on non-key fields where code name differs from DynamoDB name
             boolean isPk = field.name.equals(pkFieldName);
             boolean isSk = hasSortKey && field.name.equals(skFieldName);
             if (!isPk && !isSk && needsAttributeAnnotation(field, codeName)) {
                 fieldBuilder.addAnnotation(dynamoDbAttributeAnnotation(field.name));
+            }
+
+            // Add @Builder.Default with initializer for fields with default values
+            if (field.defaultValue != null) {
+                fieldBuilder.addAnnotation(LOMBOK_BUILDER_DEFAULT);
+                fieldBuilder.initializer(formatDefaultInitializer(field.type, field.defaultValue));
             }
 
             tb.addField(fieldBuilder.build());
@@ -433,6 +451,7 @@ public class JavaGenerator {
         ClassName entityClass = ClassName.get(pkg, entityName);
         ClassName keysClass = ClassName.get(pkg + ".keys", entityName + "Keys");
         ClassName clientClass = ClassName.get(pkg + ".client", "ChaimDynamoDbClient");
+        ClassName validatorClass = ClassName.get(pkg + ".validation", entityName + "Validator");
         ParameterizedTypeName tableType = ParameterizedTypeName.get(DYNAMO_DB_TABLE, entityClass);
         ParameterizedTypeName optionalEntity = ParameterizedTypeName.get(
             ClassName.get("java.util", "Optional"), entityClass);
@@ -442,7 +461,7 @@ public class JavaGenerator {
             .addJavadoc("Repository for $L entity with key-based operations.\n", entityName)
             .addJavadoc("Partition key: $L\n", pkFieldName)
             .addJavadoc(hasSortKey ? "Sort key: $L\n" : "No sort key.\n", skFieldName)
-            .addJavadoc("No scan operations by default - use explicit access patterns.\n");
+            .addJavadoc("Validates constraints before save. No scan operations by default.\n");
 
         // Table field
         tb.addField(FieldSpec.builder(tableType, "table", Modifier.PRIVATE, Modifier.FINAL).build());
@@ -465,11 +484,12 @@ public class JavaGenerator {
                 TABLE_SCHEMA, entityClass)
             .build());
 
-        // save() method
+        // save() method - validates constraints before persisting
         tb.addMethod(MethodSpec.methodBuilder("save")
             .addModifiers(Modifier.PUBLIC)
-            .addJavadoc("Save entity to DynamoDB.\n")
+            .addJavadoc("Save entity to DynamoDB. Validates constraints before persisting.\n")
             .addParameter(entityClass, "entity")
+            .addStatement("$T.validate(entity)", validatorClass)
             .addStatement("table.putItem(entity)")
             .build());
 
@@ -737,8 +757,320 @@ public class JavaGenerator {
     }
 
     // =========================================================================
+    // Validation Generation
+    // =========================================================================
+
+    /**
+     * Generate the shared ChaimValidationException class.
+     * Contains a list of FieldError records with field name, constraint type, and message.
+     * Generated once per table into the validation sub-package.
+     */
+    private void generateChaimValidationException(String pkg, Path outDir) throws IOException {
+        ClassName fieldErrorClass = ClassName.get(pkg + ".validation", "ChaimValidationException", "FieldError");
+        ParameterizedTypeName listOfFieldError = ParameterizedTypeName.get(
+            ClassName.get("java.util", "List"), fieldErrorClass);
+
+        // Build FieldError inner class
+        TypeSpec.Builder fieldErrorBuilder = TypeSpec.classBuilder("FieldError")
+            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+            .addField(FieldSpec.builder(String.class, "fieldName", Modifier.PRIVATE, Modifier.FINAL).build())
+            .addField(FieldSpec.builder(String.class, "constraint", Modifier.PRIVATE, Modifier.FINAL).build())
+            .addField(FieldSpec.builder(String.class, "message", Modifier.PRIVATE, Modifier.FINAL).build());
+
+        fieldErrorBuilder.addMethod(MethodSpec.constructorBuilder()
+            .addModifiers(Modifier.PUBLIC)
+            .addParameter(String.class, "fieldName")
+            .addParameter(String.class, "constraint")
+            .addParameter(String.class, "message")
+            .addStatement("this.fieldName = fieldName")
+            .addStatement("this.constraint = constraint")
+            .addStatement("this.message = message")
+            .build());
+
+        fieldErrorBuilder.addMethod(MethodSpec.methodBuilder("getFieldName")
+            .addModifiers(Modifier.PUBLIC)
+            .returns(String.class)
+            .addStatement("return fieldName")
+            .build());
+
+        fieldErrorBuilder.addMethod(MethodSpec.methodBuilder("getConstraint")
+            .addModifiers(Modifier.PUBLIC)
+            .returns(String.class)
+            .addStatement("return constraint")
+            .build());
+
+        fieldErrorBuilder.addMethod(MethodSpec.methodBuilder("getMessage")
+            .addModifiers(Modifier.PUBLIC)
+            .returns(String.class)
+            .addStatement("return message")
+            .build());
+
+        fieldErrorBuilder.addMethod(MethodSpec.methodBuilder("toString")
+            .addAnnotation(Override.class)
+            .addModifiers(Modifier.PUBLIC)
+            .returns(String.class)
+            .addStatement("return fieldName + $S + message", ": ")
+            .build());
+
+        // Build main exception class
+        TypeSpec.Builder tb = TypeSpec.classBuilder("ChaimValidationException")
+            .addModifiers(Modifier.PUBLIC)
+            .superclass(RuntimeException.class)
+            .addJavadoc("Validation exception with structured field-level errors.\n")
+            .addJavadoc("Collects all constraint violations before throwing.\n");
+
+        tb.addField(FieldSpec.builder(listOfFieldError, "errors", Modifier.PRIVATE, Modifier.FINAL).build());
+
+        tb.addMethod(MethodSpec.constructorBuilder()
+            .addModifiers(Modifier.PUBLIC)
+            .addParameter(String.class, "entityName")
+            .addParameter(listOfFieldError, "errors")
+            .addStatement("super(entityName + $S + errors.size() + $S)", " validation failed: ", " error(s)")
+            .addStatement("this.errors = $T.unmodifiableList(errors)", ClassName.get("java.util", "Collections"))
+            .build());
+
+        tb.addMethod(MethodSpec.methodBuilder("getErrors")
+            .addModifiers(Modifier.PUBLIC)
+            .addJavadoc("Get the list of field-level validation errors.\n")
+            .returns(listOfFieldError)
+            .addStatement("return errors")
+            .build());
+
+        tb.addType(fieldErrorBuilder.build());
+
+        JavaFile.builder(pkg + ".validation", tb.build())
+            .skipJavaLangImports(true)
+            .build()
+            .writeTo(outDir);
+    }
+
+    /**
+     * Generate a per-entity Validator class with constraint checks.
+     * The validator is a utility class with a static validate() method that
+     * checks required fields, constraints, and enum values defined in the
+     * .bprint schema. Throws ChaimValidationException with all violations collected.
+     */
+    private void generateValidator(BprintSchema schema, String entityName, String pkg, Path outDir) throws IOException {
+        String validatorClassName = entityName + "Validator";
+        ClassName entityClass = ClassName.get(pkg, entityName);
+        ClassName exceptionClass = ClassName.get(pkg + ".validation", "ChaimValidationException");
+        ClassName fieldErrorClass = ClassName.get(pkg + ".validation", "ChaimValidationException", "FieldError");
+        ParameterizedTypeName listOfFieldError = ParameterizedTypeName.get(
+            ClassName.get("java.util", "List"), fieldErrorClass);
+
+        // Check if any fields need validation (required, constraints, or enum)
+        boolean needsValidation = false;
+        for (BprintSchema.Field field : schema.fields) {
+            if (field.required || hasFieldConstraints(field) || hasEnumValues(field)) {
+                needsValidation = true;
+                break;
+            }
+        }
+
+        MethodSpec.Builder validateMethod = MethodSpec.methodBuilder("validate")
+            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+            .addJavadoc("Validate entity against .bprint schema rules (required, constraints, enum).\n")
+            .addJavadoc("@param entity the entity to validate\n")
+            .addJavadoc("@throws ChaimValidationException if any validations fail\n")
+            .addParameter(entityClass, "entity");
+
+        if (needsValidation) {
+            validateMethod.addStatement("$T errors = new $T<>()", listOfFieldError,
+                ClassName.get("java.util", "ArrayList"));
+
+            for (BprintSchema.Field field : schema.fields) {
+                boolean isRequired = field.required;
+                boolean hasConstraints = hasFieldConstraints(field);
+                boolean hasEnum = hasEnumValues(field);
+
+                if (!isRequired && !hasConstraints && !hasEnum) continue;
+
+                String codeName = resolveCodeName(field);
+                String getterName = "get" + cap(codeName);
+                String originalName = field.name;
+
+                // Required null-check (runs before constraint/enum checks)
+                if (isRequired) {
+                    validateMethod.beginControlFlow("if (entity.$L() == null)", getterName)
+                        .addStatement("errors.add(new $T($S, $S, $S))",
+                            fieldErrorClass, originalName, "required", "is required but was null")
+                        .endControlFlow();
+                }
+
+                // Constraint checks (null-safe)
+                if (hasConstraints) {
+                    BprintSchema.Constraints c = field.constraints;
+                    if ("string".equals(field.type)) {
+                        addStringConstraintChecks(validateMethod, getterName, originalName, c, fieldErrorClass);
+                    } else if ("number".equals(field.type)) {
+                        addNumberConstraintChecks(validateMethod, getterName, originalName, c, fieldErrorClass);
+                    }
+                }
+
+                // Enum validation (null-safe)
+                if (hasEnum) {
+                    addEnumValidationCheck(validateMethod, getterName, originalName, field.enumValues, fieldErrorClass);
+                }
+            }
+
+            validateMethod.beginControlFlow("if (!errors.isEmpty())")
+                .addStatement("throw new $T($S, errors)", exceptionClass, entityName)
+                .endControlFlow();
+        }
+
+        TypeSpec.Builder tb = TypeSpec.classBuilder(validatorClassName)
+            .addModifiers(Modifier.PUBLIC, Modifier.FINAL)
+            .addJavadoc("Validator for $L entity.\n", entityName)
+            .addJavadoc("Checks required fields, constraints, and enum values from the .bprint schema.\n");
+
+        tb.addMethod(MethodSpec.constructorBuilder()
+            .addModifiers(Modifier.PRIVATE)
+            .build());
+
+        tb.addMethod(validateMethod.build());
+
+        JavaFile.builder(pkg + ".validation", tb.build())
+            .skipJavaLangImports(true)
+            .build()
+            .writeTo(outDir);
+    }
+
+    /**
+     * Check if a field has any active constraints.
+     */
+    private static boolean hasFieldConstraints(BprintSchema.Field field) {
+        if (field.constraints == null) return false;
+        BprintSchema.Constraints c = field.constraints;
+        return c.minLength != null || c.maxLength != null || c.pattern != null
+            || c.min != null || c.max != null;
+    }
+
+    /**
+     * Add string constraint validation checks (minLength, maxLength, pattern) to the validate method.
+     */
+    private void addStringConstraintChecks(MethodSpec.Builder method, String getterName,
+            String originalName, BprintSchema.Constraints c, ClassName fieldErrorClass) {
+        method.beginControlFlow("if (entity.$L() != null)", getterName);
+
+        if (c.minLength != null) {
+            method.beginControlFlow("if (entity.$L().length() < $L)", getterName, c.minLength)
+                .addStatement("errors.add(new $T($S, $S, $S + entity.$L().length()))",
+                    fieldErrorClass, originalName, "minLength",
+                    "must have minimum length " + c.minLength + ", got ", getterName)
+                .endControlFlow();
+        }
+
+        if (c.maxLength != null) {
+            method.beginControlFlow("if (entity.$L().length() > $L)", getterName, c.maxLength)
+                .addStatement("errors.add(new $T($S, $S, $S + entity.$L().length()))",
+                    fieldErrorClass, originalName, "maxLength",
+                    "must have maximum length " + c.maxLength + ", got ", getterName)
+                .endControlFlow();
+        }
+
+        if (c.pattern != null) {
+            method.beginControlFlow("if (!entity.$L().matches($S))", getterName, c.pattern)
+                .addStatement("errors.add(new $T($S, $S, $S))",
+                    fieldErrorClass, originalName, "pattern",
+                    "must match pattern '" + c.pattern + "'")
+                .endControlFlow();
+        }
+
+        method.endControlFlow();
+    }
+
+    /**
+     * Add number constraint validation checks (min, max) to the validate method.
+     */
+    private void addNumberConstraintChecks(MethodSpec.Builder method, String getterName,
+            String originalName, BprintSchema.Constraints c, ClassName fieldErrorClass) {
+        method.beginControlFlow("if (entity.$L() != null)", getterName);
+
+        if (c.min != null) {
+            method.beginControlFlow("if (entity.$L() < $L)", getterName, c.min)
+                .addStatement("errors.add(new $T($S, $S, $S + entity.$L()))",
+                    fieldErrorClass, originalName, "min",
+                    "must be >= " + c.min + ", got ", getterName)
+                .endControlFlow();
+        }
+
+        if (c.max != null) {
+            method.beginControlFlow("if (entity.$L() > $L)", getterName, c.max)
+                .addStatement("errors.add(new $T($S, $S, $S + entity.$L()))",
+                    fieldErrorClass, originalName, "max",
+                    "must be <= " + c.max + ", got ", getterName)
+                .endControlFlow();
+        }
+
+        method.endControlFlow();
+    }
+
+    /**
+     * Add enum allowed-value validation check to the validate method.
+     */
+    private void addEnumValidationCheck(MethodSpec.Builder method, String getterName,
+            String originalName, List<String> enumValues, ClassName fieldErrorClass) {
+        method.beginControlFlow("if (entity.$L() != null)", getterName);
+
+        // Build Set.of(...) with all allowed values
+        StringBuilder setArgs = new StringBuilder();
+        for (int i = 0; i < enumValues.size(); i++) {
+            if (i > 0) setArgs.append(", ");
+            setArgs.append("$S");
+        }
+
+        String allowedList = String.join(", ", enumValues);
+        Object[] args = new Object[enumValues.size() + 2];
+        args[0] = fieldErrorClass;
+        args[1] = originalName;
+        System.arraycopy(enumValues.toArray(), 0, args, 2, enumValues.size());
+
+        // Build the if-check with Set.of(...)
+        CodeBlock.Builder setOfBlock = CodeBlock.builder();
+        setOfBlock.add("$T.of(", ClassName.get("java.util", "Set"));
+        for (int i = 0; i < enumValues.size(); i++) {
+            if (i > 0) setOfBlock.add(", ");
+            setOfBlock.add("$S", enumValues.get(i));
+        }
+        setOfBlock.add(")");
+
+        method.beginControlFlow("if (!$L.contains(entity.$L()))", setOfBlock.build(), getterName)
+            .addStatement("errors.add(new $T($S, $S, $S + entity.$L()))",
+                fieldErrorClass, originalName, "enum",
+                "must be one of [" + allowedList + "], got ", getterName)
+            .endControlFlow();
+
+        method.endControlFlow();
+    }
+
+    // =========================================================================
     // Utility Methods
     // =========================================================================
+
+    /**
+     * Format a default value as a Java field initializer code block.
+     */
+    private static CodeBlock formatDefaultInitializer(String fieldType, Object defaultValue) {
+        return switch (fieldType) {
+            case "string" -> CodeBlock.of("$S", defaultValue.toString());
+            case "number" -> {
+                if (defaultValue instanceof Number num) {
+                    yield CodeBlock.of("$L", num.doubleValue());
+                }
+                yield CodeBlock.of("$L", Double.parseDouble(defaultValue.toString()));
+            }
+            case "boolean", "bool" -> CodeBlock.of("$L", Boolean.valueOf(defaultValue.toString()));
+            case "timestamp" -> CodeBlock.of("$T.parse($S)", java.time.Instant.class, defaultValue.toString());
+            default -> CodeBlock.of("$L", defaultValue);
+        };
+    }
+
+    /**
+     * Check if a field has enum values defined.
+     */
+    private static boolean hasEnumValues(BprintSchema.Field field) {
+        return field.enumValues != null && !field.enumValues.isEmpty();
+    }
 
     private static ClassName mapType(String type) {
         return switch (type) {
