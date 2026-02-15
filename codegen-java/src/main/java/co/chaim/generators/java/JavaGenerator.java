@@ -23,10 +23,14 @@ import java.util.regex.Pattern;
  * valid Java identifiers. When the resolved code name differs from the
  * original DynamoDB attribute name, a @DynamoDbAttribute annotation is emitted.
  * 
+ * Supports collection types: list, map, stringSet, numberSet.
+ * For list-of-map and standalone map fields, generates inner @DynamoDbBean classes.
+ * 
  * Generates:
  * - Entity DTOs with DynamoDB Enhanced Client annotations on schema-defined keys
  * - Key constants helper ({Entity}Keys.java) with field name references
  * - Entity-specific repositories with key-based operations (with auto-validation on save)
+ * - GSI/LSI query methods in repositories when index metadata is available
  * - Shared DI-friendly DynamoDB client (ChaimDynamoDbClient)
  * - Configuration with repository factory methods (ChaimConfig)
  * - Shared ChaimValidationException for structured field-level errors
@@ -62,6 +66,10 @@ public class JavaGenerator {
         "software.amazon.awssdk.enhanced.dynamodb", "TableSchema");
     private static final ClassName KEY = ClassName.get(
         "software.amazon.awssdk.enhanced.dynamodb", "Key");
+    private static final ClassName DYNAMO_DB_INDEX = ClassName.get(
+        "software.amazon.awssdk.enhanced.dynamodb", "DynamoDbIndex");
+    private static final ClassName QUERY_CONDITIONAL = ClassName.get(
+        "software.amazon.awssdk.enhanced.dynamodb.model", "QueryConditional");
     private static final ClassName DYNAMO_DB_CLIENT = ClassName.get(
         "software.amazon.awssdk.services.dynamodb", "DynamoDbClient");
     private static final ClassName REGION = ClassName.get(
@@ -74,7 +82,7 @@ public class JavaGenerator {
      * @param schemas List of .bprint schemas for entities in this table
      * @param pkg Java package name for generated code
      * @param outDir Output directory
-     * @param tableMetadata Table metadata (name, ARN, region)
+     * @param tableMetadata Table metadata (name, ARN, region, GSI/LSI info)
      */
     public void generateForTable(List<BprintSchema> schemas, String pkg, Path outDir, TableMetadata tableMetadata) throws IOException {
         // Validate all schemas for name collisions before generating any code
@@ -101,10 +109,10 @@ public class JavaGenerator {
         for (BprintSchema schema : schemas) {
             String entityName = deriveEntityName(schema);
             generateEntity(schema, entityName, pkg, outDir);
-            generateEntityKeys(schema, entityName, pkg, outDir);
+            generateEntityKeys(schema, entityName, pkg, outDir, tableMetadata);
             generateValidator(schema, entityName, pkg, outDir);
             if (tableMetadata != null) {
-                generateRepository(schema, entityName, pkg, outDir);
+                generateRepository(schema, entityName, pkg, outDir, tableMetadata);
             }
         }
     }
@@ -260,6 +268,9 @@ public class JavaGenerator {
      * 
      * Uses resolved code names for Java fields and emits @DynamoDbAttribute
      * annotations when the code name differs from the DynamoDB attribute name.
+     * 
+     * For collection types (list-of-map, standalone map), generates inner
+     * @DynamoDbBean static classes to represent the nested structure.
      */
     private void generateEntity(BprintSchema schema, String entityName, String pkg, Path outDir) throws IOException {
         String pkFieldName = schema.primaryKey.partitionKey;
@@ -268,6 +279,9 @@ public class JavaGenerator {
 
         String pkCodeName = resolveKeyCodeName(schema, pkFieldName);
         String skCodeName = hasSortKey ? resolveKeyCodeName(schema, skFieldName) : null;
+
+        ClassName entityClass = ClassName.get(pkg, entityName);
+        List<TypeSpec> innerClasses = new ArrayList<>();
 
         TypeSpec.Builder tb = TypeSpec.classBuilder(entityName)
             .addModifiers(Modifier.PUBLIC)
@@ -280,7 +294,7 @@ public class JavaGenerator {
         // Add all fields from schema using resolved code names
         for (BprintSchema.Field field : schema.fields) {
             String codeName = resolveCodeName(field);
-            ClassName type = mapType(field.type);
+            TypeName type = mapFieldType(field, entityClass, innerClasses);
 
             FieldSpec.Builder fieldBuilder = FieldSpec.builder(type, codeName, Modifier.PRIVATE);
 
@@ -307,7 +321,7 @@ public class JavaGenerator {
 
         // Generate explicit getter for partition key with @DynamoDbPartitionKey
         String pkGetterName = "get" + cap(pkCodeName);
-        ClassName pkType = findFieldType(schema, pkFieldName);
+        TypeName pkType = findFieldType(schema, pkFieldName, entityClass);
         MethodSpec.Builder pkGetter = MethodSpec.methodBuilder(pkGetterName)
             .addModifiers(Modifier.PUBLIC)
             .addAnnotation(DYNAMO_DB_PARTITION_KEY)
@@ -323,7 +337,7 @@ public class JavaGenerator {
         // Generate explicit getter for sort key with @DynamoDbSortKey (if defined)
         if (hasSortKey) {
             String skGetterName = "get" + cap(skCodeName);
-            ClassName skType = findFieldType(schema, skFieldName);
+            TypeName skType = findFieldType(schema, skFieldName, entityClass);
             MethodSpec.Builder skGetter = MethodSpec.methodBuilder(skGetterName)
                 .addModifiers(Modifier.PUBLIC)
                 .addAnnotation(DYNAMO_DB_SORT_KEY)
@@ -336,6 +350,11 @@ public class JavaGenerator {
             tb.addMethod(skGetter.build());
         }
 
+        // Add inner classes for collection types (list-of-map, standalone map)
+        for (TypeSpec inner : innerClasses) {
+            tb.addType(inner);
+        }
+
         JavaFile.builder(pkg, tb.build())
             .skipJavaLangImports(true)
             .build()
@@ -345,10 +364,10 @@ public class JavaGenerator {
     /**
      * Find the type of a field by name in the schema.
      */
-    private ClassName findFieldType(BprintSchema schema, String fieldName) {
+    private TypeName findFieldType(BprintSchema schema, String fieldName, ClassName entityClass) {
         for (BprintSchema.Field field : schema.fields) {
             if (field.name.equals(fieldName)) {
-                return mapType(field.type);
+                return mapFieldType(field, entityClass, new ArrayList<>());
             }
         }
         return ClassName.get(String.class);
@@ -364,8 +383,10 @@ public class JavaGenerator {
      * PARTITION_KEY_FIELD and SORT_KEY_FIELD constants contain the original
      * DynamoDB attribute names (used for queries). Method parameter names
      * use the resolved Java code names for readability.
+     * 
+     * Also generates INDEX_ constants for each GSI/LSI.
      */
-    private void generateEntityKeys(BprintSchema schema, String entityName, String pkg, Path outDir) throws IOException {
+    private void generateEntityKeys(BprintSchema schema, String entityName, String pkg, Path outDir, TableMetadata tableMetadata) throws IOException {
         String keysClassName = entityName + "Keys";
         
         String pkFieldName = schema.primaryKey.partitionKey;
@@ -398,6 +419,28 @@ public class JavaGenerator {
                 .initializer("$S", skFieldName)
                 .addJavadoc("The DynamoDB attribute name used as sort key.\n")
                 .build());
+        }
+
+        // INDEX_ constants for GSIs
+        if (tableMetadata != null && tableMetadata.globalSecondaryIndexes() != null) {
+            for (TableMetadata.GSIMetadata gsi : tableMetadata.globalSecondaryIndexes()) {
+                String constName = "INDEX_" + toConstantCase(gsi.indexName());
+                tb.addField(FieldSpec.builder(String.class, constName, Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
+                    .initializer("$S", gsi.indexName())
+                    .addJavadoc("GSI index name: $L\n", gsi.indexName())
+                    .build());
+            }
+        }
+
+        // INDEX_ constants for LSIs
+        if (tableMetadata != null && tableMetadata.localSecondaryIndexes() != null) {
+            for (TableMetadata.LSIMetadata lsi : tableMetadata.localSecondaryIndexes()) {
+                String constName = "INDEX_" + toConstantCase(lsi.indexName());
+                tb.addField(FieldSpec.builder(String.class, constName, Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
+                    .initializer("$S", lsi.indexName())
+                    .addJavadoc("LSI index name: $L\n", lsi.indexName())
+                    .build());
+            }
         }
 
         // key() method - parameter names use resolved code names for readability
@@ -438,8 +481,9 @@ public class JavaGenerator {
     /**
      * Generate entity-specific repository with key-based operations.
      * Uses resolved code names for method parameter names.
+     * Generates queryBy methods for each GSI/LSI.
      */
-    private void generateRepository(BprintSchema schema, String entityName, String pkg, Path outDir) throws IOException {
+    private void generateRepository(BprintSchema schema, String entityName, String pkg, Path outDir, TableMetadata tableMetadata) throws IOException {
         String repoClassName = entityName + "Repository";
         String pkFieldName = schema.primaryKey.partitionKey;
         String skFieldName = schema.primaryKey.sortKey;
@@ -455,6 +499,8 @@ public class JavaGenerator {
         ParameterizedTypeName tableType = ParameterizedTypeName.get(DYNAMO_DB_TABLE, entityClass);
         ParameterizedTypeName optionalEntity = ParameterizedTypeName.get(
             ClassName.get("java.util", "Optional"), entityClass);
+        ParameterizedTypeName listOfEntity = ParameterizedTypeName.get(
+            ClassName.get("java.util", "List"), entityClass);
 
         TypeSpec.Builder tb = TypeSpec.classBuilder(repoClassName)
             .addModifiers(Modifier.PUBLIC)
@@ -532,10 +578,71 @@ public class JavaGenerator {
                 .build());
         }
 
+        // Generate query methods for GSIs
+        if (tableMetadata.globalSecondaryIndexes() != null) {
+            for (TableMetadata.GSIMetadata gsi : tableMetadata.globalSecondaryIndexes()) {
+                addIndexQueryMethods(tb, gsi.indexName(), gsi.partitionKey(), gsi.sortKey(),
+                    entityClass, listOfEntity);
+            }
+        }
+
+        // Generate query methods for LSIs
+        if (tableMetadata.localSecondaryIndexes() != null) {
+            for (TableMetadata.LSIMetadata lsi : tableMetadata.localSecondaryIndexes()) {
+                addIndexQueryMethods(tb, lsi.indexName(), lsi.partitionKey(), lsi.sortKey(),
+                    entityClass, listOfEntity);
+            }
+        }
+
         JavaFile.builder(pkg + ".repository", tb.build())
             .skipJavaLangImports(true)
             .build()
             .writeTo(outDir);
+    }
+
+    /**
+     * Add queryBy{IndexName} methods for a GSI or LSI.
+     * Generates a PK-only query method, plus an overloaded PK+SK method if the index has a sort key.
+     */
+    private void addIndexQueryMethods(TypeSpec.Builder tb, String indexName, String partitionKey,
+            String sortKey, ClassName entityClass, ParameterizedTypeName listOfEntity) {
+        String methodName = "queryBy" + cap(toCamelCase(indexName));
+        String pkParamName = toCamelCase(partitionKey);
+        ParameterizedTypeName indexType = ParameterizedTypeName.get(DYNAMO_DB_INDEX, entityClass);
+
+        // PK-only query
+        tb.addMethod(MethodSpec.methodBuilder(methodName)
+            .addModifiers(Modifier.PUBLIC)
+            .addJavadoc("Query $L index by partition key.\n", indexName)
+            .addParameter(String.class, pkParamName)
+            .returns(listOfEntity)
+            .addStatement("$T index = table.index($S)", indexType, indexName)
+            .addStatement("$T condition = $T.keyEqualTo($T.builder().partitionValue($L).build())",
+                QUERY_CONDITIONAL, QUERY_CONDITIONAL, KEY, pkParamName)
+            .addStatement("$T<$T> results = new $T<>()",
+                ClassName.get("java.util", "List"), entityClass, ClassName.get("java.util", "ArrayList"))
+            .addStatement("index.query(condition).forEach(page -> results.addAll(page.items()))")
+            .addStatement("return results")
+            .build());
+
+        // PK+SK query (if sort key exists)
+        if (sortKey != null && !sortKey.isEmpty()) {
+            String skParamName = toCamelCase(sortKey);
+            tb.addMethod(MethodSpec.methodBuilder(methodName)
+                .addModifiers(Modifier.PUBLIC)
+                .addJavadoc("Query $L index by partition key and sort key.\n", indexName)
+                .addParameter(String.class, pkParamName)
+                .addParameter(String.class, skParamName)
+                .returns(listOfEntity)
+                .addStatement("$T index = table.index($S)", indexType, indexName)
+                .addStatement("$T condition = $T.keyEqualTo($T.builder().partitionValue($L).sortValue($L).build())",
+                    QUERY_CONDITIONAL, QUERY_CONDITIONAL, KEY, pkParamName, skParamName)
+                .addStatement("$T<$T> results = new $T<>()",
+                    ClassName.get("java.util", "List"), entityClass, ClassName.get("java.util", "ArrayList"))
+                .addStatement("index.query(condition).forEach(page -> results.addAll(page.items()))")
+                .addStatement("return results")
+                .build());
+        }
     }
 
     // =========================================================================
@@ -849,6 +956,7 @@ public class JavaGenerator {
      * The validator is a utility class with a static validate() method that
      * checks required fields, constraints, and enum values defined in the
      * .bprint schema. Throws ChaimValidationException with all violations collected.
+     * Collection-type fields are skipped for constraint/enum checks.
      */
     private void generateValidator(BprintSchema schema, String entityName, String pkg, Path outDir) throws IOException {
         String validatorClassName = entityName + "Validator";
@@ -858,10 +966,10 @@ public class JavaGenerator {
         ParameterizedTypeName listOfFieldError = ParameterizedTypeName.get(
             ClassName.get("java.util", "List"), fieldErrorClass);
 
-        // Check if any fields need validation (required, constraints, or enum)
+        // Check if any fields need validation (required, constraints, or enum) - skip collection type constraints
         boolean needsValidation = false;
         for (BprintSchema.Field field : schema.fields) {
-            if (field.required || hasFieldConstraints(field) || hasEnumValues(field)) {
+            if (field.required || (!isCollectionType(field.type) && (hasFieldConstraints(field) || hasEnumValues(field)))) {
                 needsValidation = true;
                 break;
             }
@@ -880,8 +988,9 @@ public class JavaGenerator {
 
             for (BprintSchema.Field field : schema.fields) {
                 boolean isRequired = field.required;
-                boolean hasConstraints = hasFieldConstraints(field);
-                boolean hasEnum = hasEnumValues(field);
+                boolean isCollection = isCollectionType(field.type);
+                boolean hasConstraints = !isCollection && hasFieldConstraints(field);
+                boolean hasEnum = !isCollection && hasEnumValues(field);
 
                 if (!isRequired && !hasConstraints && !hasEnum) continue;
 
@@ -897,7 +1006,7 @@ public class JavaGenerator {
                         .endControlFlow();
                 }
 
-                // Constraint checks (null-safe)
+                // Constraint checks (null-safe) - not applicable to collection types
                 if (hasConstraints) {
                     BprintSchema.Constraints c = field.constraints;
                     if ("string".equals(field.type)) {
@@ -907,7 +1016,7 @@ public class JavaGenerator {
                     }
                 }
 
-                // Enum validation (null-safe)
+                // Enum validation (null-safe) - not applicable to collection types
                 if (hasEnum) {
                     addEnumValidationCheck(validateMethod, getterName, originalName, field.enumValues, fieldErrorClass);
                 }
@@ -1044,6 +1153,113 @@ public class JavaGenerator {
     }
 
     // =========================================================================
+    // Type Mapping
+    // =========================================================================
+
+    /**
+     * Check if a type is a collection type (list, map, stringSet, numberSet).
+     */
+    private static boolean isCollectionType(String type) {
+        return "list".equals(type) || "map".equals(type)
+            || "stringSet".equals(type) || "numberSet".equals(type);
+    }
+
+    /**
+     * Map a field to its Java type, handling both scalar and collection types.
+     * For list-of-map and standalone map, generates inner @DynamoDbBean classes
+     * and adds them to the provided list.
+     * 
+     * @param field The bprint field
+     * @param entityClass The parent entity ClassName (for inner class naming)
+     * @param innerClasses Collector for generated inner TypeSpecs
+     * @return The Java TypeName for this field
+     */
+    private TypeName mapFieldType(BprintSchema.Field field, ClassName entityClass, List<TypeSpec> innerClasses) {
+        return switch (field.type) {
+            case "list" -> mapListType(field, entityClass, innerClasses);
+            case "map" -> mapMapType(field, entityClass, innerClasses);
+            case "stringSet" -> ParameterizedTypeName.get(
+                ClassName.get("java.util", "Set"), ClassName.get(String.class));
+            case "numberSet" -> ParameterizedTypeName.get(
+                ClassName.get("java.util", "Set"), ClassName.get(Double.class));
+            default -> mapScalarType(field.type);
+        };
+    }
+
+    /**
+     * Map a list field to its Java type.
+     * For list-of-scalars: List<String>, List<Double>, etc.
+     * For list-of-map: generates an inner class and returns List<InnerClass>.
+     */
+    private TypeName mapListType(BprintSchema.Field field, ClassName entityClass, List<TypeSpec> innerClasses) {
+        if (field.items == null) {
+            return ParameterizedTypeName.get(
+                ClassName.get("java.util", "List"), ClassName.get(Object.class));
+        }
+
+        if ("map".equals(field.items.type) && field.items.fields != null) {
+            String codeName = resolveCodeName(field);
+            String innerClassName = cap(codeName) + "Item";
+            TypeSpec innerClass = buildNestedBeanClass(innerClassName, field.items.fields);
+            innerClasses.add(innerClass);
+            ClassName innerType = entityClass.nestedClass(innerClassName);
+            return ParameterizedTypeName.get(ClassName.get("java.util", "List"), innerType);
+        }
+
+        ClassName elementType = mapScalarType(field.items.type);
+        return ParameterizedTypeName.get(ClassName.get("java.util", "List"), elementType);
+    }
+
+    /**
+     * Map a standalone map field to its Java type.
+     * Generates an inner @DynamoDbBean class for the map structure.
+     */
+    private TypeName mapMapType(BprintSchema.Field field, ClassName entityClass, List<TypeSpec> innerClasses) {
+        if (field.fields == null || field.fields.isEmpty()) {
+            return ClassName.get(Object.class);
+        }
+
+        String codeName = resolveCodeName(field);
+        String innerClassName = cap(codeName);
+        TypeSpec innerClass = buildNestedBeanClass(innerClassName, field.fields);
+        innerClasses.add(innerClass);
+        return entityClass.nestedClass(innerClassName);
+    }
+
+    /**
+     * Build an inner static @DynamoDbBean class for nested map structures.
+     * Uses Lombok @Data and @NoArgsConstructor for getters/setters/constructors.
+     */
+    private TypeSpec buildNestedBeanClass(String className, List<BprintSchema.NestedField> nestedFields) {
+        TypeSpec.Builder tb = TypeSpec.classBuilder(className)
+            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+            .addAnnotation(LOMBOK_DATA)
+            .addAnnotation(LOMBOK_NO_ARGS_CONSTRUCTOR)
+            .addAnnotation(LOMBOK_ALL_ARGS_CONSTRUCTOR)
+            .addAnnotation(DYNAMO_DB_BEAN);
+
+        for (BprintSchema.NestedField nf : nestedFields) {
+            ClassName type = mapScalarType(nf.type);
+            tb.addField(FieldSpec.builder(type, nf.name, Modifier.PRIVATE).build());
+        }
+
+        return tb.build();
+    }
+
+    /**
+     * Map a scalar bprint type to its Java ClassName.
+     */
+    private static ClassName mapScalarType(String type) {
+        return switch (type) {
+            case "string" -> ClassName.get(String.class);
+            case "number" -> ClassName.get(Double.class);
+            case "boolean", "bool" -> ClassName.get(Boolean.class);
+            case "timestamp" -> ClassName.get(java.time.Instant.class);
+            default -> ClassName.get(Object.class);
+        };
+    }
+
+    // =========================================================================
     // Utility Methods
     // =========================================================================
 
@@ -1072,14 +1288,44 @@ public class JavaGenerator {
         return field.enumValues != null && !field.enumValues.isEmpty();
     }
 
-    private static ClassName mapType(String type) {
-        return switch (type) {
-            case "string" -> ClassName.get(String.class);
-            case "number" -> ClassName.get(Double.class);
-            case "boolean", "bool" -> ClassName.get(Boolean.class);
-            case "timestamp" -> ClassName.get(java.time.Instant.class);
-            default -> ClassName.get(Object.class);
-        };
+    /**
+     * Convert a string to UPPER_SNAKE_CASE for constant names.
+     * Handles hyphens, underscores, and camelCase boundaries.
+     */
+    static String toConstantCase(String name) {
+        if (name == null || name.isEmpty()) return name;
+        // Replace hyphens with underscores, then insert underscore before uppercase letters
+        String result = name.replace("-", "_");
+        // Insert underscore before uppercase letters preceded by lowercase
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < result.length(); i++) {
+            char c = result.charAt(i);
+            if (Character.isUpperCase(c) && i > 0 && Character.isLowerCase(result.charAt(i - 1))) {
+                sb.append('_');
+            }
+            sb.append(c);
+        }
+        return sb.toString().toUpperCase();
+    }
+
+    /**
+     * Convert a hyphenated or underscored string to camelCase.
+     */
+    static String toCamelCase(String name) {
+        if (name == null || name.isEmpty()) return name;
+        String[] parts = name.split("[-_]");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.length; i++) {
+            if (parts[i].isEmpty()) continue;
+            if (sb.isEmpty()) {
+                sb.append(parts[i].substring(0, 1).toLowerCase());
+                if (parts[i].length() > 1) sb.append(parts[i].substring(1));
+            } else {
+                sb.append(parts[i].substring(0, 1).toUpperCase());
+                if (parts[i].length() > 1) sb.append(parts[i].substring(1));
+            }
+        }
+        return sb.toString();
     }
 
     private static String cap(String s) {

@@ -33,6 +33,10 @@ public class BprintSchema {
     public List<String> enumValues;
     public Constraints constraints;
     public FieldAnnotations annotations;
+    /** Element type definition for list fields. */
+    public ListItems items;
+    /** Nested field definitions for map type fields. */
+    public List<NestedField> fields;
   }
 
   /**
@@ -50,6 +54,26 @@ public class BprintSchema {
     // Number constraints
     public Double min;
     public Double max;
+  }
+
+  /**
+   * Element type definition for list fields.
+   * When type is 'map', fields defines the map structure.
+   */
+  @JsonIgnoreProperties(ignoreUnknown = true)
+  public static class ListItems {
+    public String type;
+    public List<NestedField> fields;
+  }
+
+  /**
+   * Simplified field definition for nested map structures.
+   * Only name and scalar type - no constraints or annotations.
+   */
+  @JsonIgnoreProperties(ignoreUnknown = true)
+  public static class NestedField {
+    public String name;
+    public String type;
   }
 
   /**

@@ -105,11 +105,13 @@ public class JavaGeneratorTest {
     
     orderSchema.fields = List.of(orderUserIdField, orderEntityTypeField, amountField);
 
-    // Create table metadata (simple record with just table info)
+    // Create table metadata (no GSI/LSI for basic tests)
     tableMetadata = new TableMetadata(
         "DataTable",
         "arn:aws:dynamodb:us-east-1:123456789012:table/DataTable",
-        "us-east-1"
+        "us-east-1",
+        null,
+        null
     );
   }
 
@@ -1602,5 +1604,581 @@ public class JavaGeneratorTest {
     // Fields should be declared directly without preceding Javadoc comments
     assertThat(content).contains("private String id;");
     assertThat(content).contains("private String value;");
+  }
+
+  // =========================================================================
+  // Collection type tests
+  // =========================================================================
+
+  @Test
+  void generatesEntityWithListOfStrings() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Order with tags";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "orderId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "orderId";
+    orderId.type = "string";
+    orderId.required = true;
+
+    BprintSchema.Field tags = new BprintSchema.Field();
+    tags.name = "tags";
+    tags.type = "list";
+    BprintSchema.ListItems tagsItems = new BprintSchema.ListItems();
+    tagsItems.type = "string";
+    tags.items = tagsItems;
+
+    schema.fields = List.of(orderId, tags);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Order.java"));
+
+    assertThat(content).contains("private List<String> tags");
+    assertThat(content).contains("import java.util.List");
+  }
+
+  @Test
+  void generatesEntityWithListOfNumbers() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Score";
+    schema.description = "Score with values";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "scoreId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field scoreId = new BprintSchema.Field();
+    scoreId.name = "scoreId";
+    scoreId.type = "string";
+
+    BprintSchema.Field values = new BprintSchema.Field();
+    values.name = "values";
+    values.type = "list";
+    BprintSchema.ListItems valuesItems = new BprintSchema.ListItems();
+    valuesItems.type = "number";
+    values.items = valuesItems;
+
+    schema.fields = List.of(scoreId, values);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Score.java"));
+
+    assertThat(content).contains("private List<Double> values");
+  }
+
+  @Test
+  void generatesEntityWithListOfMaps() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Order with line items";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "orderId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "orderId";
+    orderId.type = "string";
+    orderId.required = true;
+
+    BprintSchema.Field lineItems = new BprintSchema.Field();
+    lineItems.name = "lineItems";
+    lineItems.type = "list";
+    BprintSchema.ListItems lineItemsItems = new BprintSchema.ListItems();
+    lineItemsItems.type = "map";
+    BprintSchema.NestedField productIdNested = new BprintSchema.NestedField();
+    productIdNested.name = "productId";
+    productIdNested.type = "string";
+    BprintSchema.NestedField quantityNested = new BprintSchema.NestedField();
+    quantityNested.name = "quantity";
+    quantityNested.type = "number";
+    BprintSchema.NestedField priceNested = new BprintSchema.NestedField();
+    priceNested.name = "price";
+    priceNested.type = "number";
+    lineItemsItems.fields = List.of(productIdNested, quantityNested, priceNested);
+    lineItems.items = lineItemsItems;
+
+    schema.fields = List.of(orderId, lineItems);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Order.java"));
+
+    // Should generate List<LineItemsItem> field
+    assertThat(content).contains("private List<LineItemsItem> lineItems");
+
+    // Should generate inner @DynamoDbBean class
+    assertThat(content).contains("public static class LineItemsItem");
+    assertThat(content).contains("private String productId");
+    assertThat(content).contains("private Double quantity");
+    assertThat(content).contains("private Double price");
+
+    // Inner class should have DynamoDB and Lombok annotations
+    assertThat(content).contains("@DynamoDbBean");
+    assertThat(content).contains("@NoArgsConstructor");
+    assertThat(content).contains("@AllArgsConstructor");
+  }
+
+  @Test
+  void generatesEntityWithStandaloneMap() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Config";
+    schema.description = "Config with metadata map";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "configId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field configId = new BprintSchema.Field();
+    configId.name = "configId";
+    configId.type = "string";
+
+    BprintSchema.Field metadata = new BprintSchema.Field();
+    metadata.name = "metadata";
+    metadata.type = "map";
+    BprintSchema.NestedField sourceField = new BprintSchema.NestedField();
+    sourceField.name = "source";
+    sourceField.type = "string";
+    BprintSchema.NestedField versionField = new BprintSchema.NestedField();
+    versionField.name = "version";
+    versionField.type = "number";
+    metadata.fields = List.of(sourceField, versionField);
+
+    schema.fields = List.of(configId, metadata);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Config.java"));
+
+    // Should generate Metadata inner class
+    assertThat(content).contains("private Metadata metadata");
+    assertThat(content).contains("public static class Metadata");
+    assertThat(content).contains("private String source");
+    assertThat(content).contains("private Double version");
+  }
+
+  @Test
+  void generatesEntityWithStringSet() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "User";
+    schema.description = "User with roles";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "userId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field userId = new BprintSchema.Field();
+    userId.name = "userId";
+    userId.type = "string";
+
+    BprintSchema.Field roles = new BprintSchema.Field();
+    roles.name = "roles";
+    roles.type = "stringSet";
+
+    schema.fields = List.of(userId, roles);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/User.java"));
+
+    assertThat(content).contains("private Set<String> roles");
+    assertThat(content).contains("import java.util.Set");
+  }
+
+  @Test
+  void generatesEntityWithNumberSet() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Score";
+    schema.description = "Score with tiers";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "scoreId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field scoreId = new BprintSchema.Field();
+    scoreId.name = "scoreId";
+    scoreId.type = "string";
+
+    BprintSchema.Field tiers = new BprintSchema.Field();
+    tiers.name = "tiers";
+    tiers.type = "numberSet";
+
+    schema.fields = List.of(scoreId, tiers);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Score.java"));
+
+    assertThat(content).contains("private Set<Double> tiers");
+  }
+
+  @Test
+  void validatorSkipsConstraintsOnCollectionTypes() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Order with required collection";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "orderId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "orderId";
+    orderId.type = "string";
+    orderId.required = true;
+
+    BprintSchema.Field tags = new BprintSchema.Field();
+    tags.name = "tags";
+    tags.type = "list";
+    tags.required = true;
+    BprintSchema.ListItems tagsItems = new BprintSchema.ListItems();
+    tagsItems.type = "string";
+    tags.items = tagsItems;
+
+    BprintSchema.Field roles = new BprintSchema.Field();
+    roles.name = "roles";
+    roles.type = "stringSet";
+    roles.required = true;
+
+    schema.fields = List.of(orderId, tags, roles);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/validation/OrderValidator.java"));
+
+    // Required checks should be present for all required fields (including collections)
+    assertThat(content).contains("entity.getOrderId() == null");
+    assertThat(content).contains("entity.getTags() == null");
+    assertThat(content).contains("entity.getRoles() == null");
+
+    // No constraint/enum checks for collection types
+    assertThat(content).doesNotContain("length()");
+    assertThat(content).doesNotContain("matches(");
+    assertThat(content).doesNotContain("Set.of(");
+  }
+
+  @Test
+  void generatesEntityWithAllCollectionTypes() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Order with all collection types";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "orderId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "orderId";
+    orderId.type = "string";
+    orderId.required = true;
+
+    BprintSchema.Field tags = new BprintSchema.Field();
+    tags.name = "tags";
+    tags.type = "list";
+    BprintSchema.ListItems tagsItems = new BprintSchema.ListItems();
+    tagsItems.type = "string";
+    tags.items = tagsItems;
+
+    BprintSchema.Field lineItems = new BprintSchema.Field();
+    lineItems.name = "lineItems";
+    lineItems.type = "list";
+    BprintSchema.ListItems liItems = new BprintSchema.ListItems();
+    liItems.type = "map";
+    BprintSchema.NestedField pidNf = new BprintSchema.NestedField();
+    pidNf.name = "productId";
+    pidNf.type = "string";
+    BprintSchema.NestedField qtyNf = new BprintSchema.NestedField();
+    qtyNf.name = "quantity";
+    qtyNf.type = "number";
+    liItems.fields = List.of(pidNf, qtyNf);
+    lineItems.items = liItems;
+
+    BprintSchema.Field shippingAddr = new BprintSchema.Field();
+    shippingAddr.name = "shippingAddress";
+    shippingAddr.type = "map";
+    BprintSchema.NestedField streetNf = new BprintSchema.NestedField();
+    streetNf.name = "street";
+    streetNf.type = "string";
+    BprintSchema.NestedField cityNf = new BprintSchema.NestedField();
+    cityNf.name = "city";
+    cityNf.type = "string";
+    shippingAddr.fields = List.of(streetNf, cityNf);
+
+    BprintSchema.Field promoCodes = new BprintSchema.Field();
+    promoCodes.name = "promotionCodes";
+    promoCodes.type = "stringSet";
+
+    BprintSchema.Field discountTiers = new BprintSchema.Field();
+    discountTiers.name = "discountTiers";
+    discountTiers.type = "numberSet";
+
+    schema.fields = List.of(orderId, tags, lineItems, shippingAddr, promoCodes, discountTiers);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String content = Files.readString(out.resolve("com/example/model/Order.java"));
+
+    // All collection types mapped correctly
+    assertThat(content).contains("private List<String> tags");
+    assertThat(content).contains("private List<LineItemsItem> lineItems");
+    assertThat(content).contains("private ShippingAddress shippingAddress");
+    assertThat(content).contains("private Set<String> promotionCodes");
+    assertThat(content).contains("private Set<Double> discountTiers");
+
+    // Inner classes generated
+    assertThat(content).contains("public static class LineItemsItem");
+    assertThat(content).contains("public static class ShippingAddress");
+  }
+
+  // =========================================================================
+  // GSI/LSI query generation tests
+  // =========================================================================
+
+  @Test
+  void generatesRepositoryWithGSIQueryMethod() throws Exception {
+    TableMetadata metaWithGsi = new TableMetadata(
+        "OrdersTable",
+        "arn:aws:dynamodb:us-east-1:123:table/OrdersTable",
+        "us-east-1",
+        List.of(new TableMetadata.GSIMetadata("customer-index", "customerId", null, "ALL")),
+        null
+    );
+
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Order entity";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "orderId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "orderId";
+    orderId.type = "string";
+    orderId.required = true;
+
+    BprintSchema.Field customerId = new BprintSchema.Field();
+    customerId.name = "customerId";
+    customerId.type = "string";
+
+    schema.fields = List.of(orderId, customerId);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, metaWithGsi);
+
+    String repoContent = Files.readString(out.resolve("com/example/model/repository/OrderRepository.java"));
+
+    // Query method generated for the GSI
+    assertThat(repoContent).contains("public List<Order> queryByCustomerIndex(String customerId)");
+    assertThat(repoContent).contains("table.index(\"customer-index\")");
+    assertThat(repoContent).contains("QueryConditional");
+    assertThat(repoContent).contains("partitionValue(customerId)");
+    assertThat(repoContent).contains("results.addAll(page.items())");
+  }
+
+  @Test
+  void generatesRepositoryWithGSIAndSortKey() throws Exception {
+    TableMetadata metaWithGsi = new TableMetadata(
+        "OrdersTable",
+        "arn:aws:dynamodb:us-east-1:123:table/OrdersTable",
+        "us-east-1",
+        List.of(new TableMetadata.GSIMetadata("customer-date-index", "customerId", "orderDate", "ALL")),
+        null
+    );
+
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Order entity";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "orderId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "orderId";
+    orderId.type = "string";
+
+    schema.fields = List.of(orderId);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, metaWithGsi);
+
+    String repoContent = Files.readString(out.resolve("com/example/model/repository/OrderRepository.java"));
+
+    // PK-only method
+    assertThat(repoContent).contains("public List<Order> queryByCustomerDateIndex(String customerId)");
+
+    // PK+SK overloaded method
+    assertThat(repoContent).contains("public List<Order> queryByCustomerDateIndex(String customerId, String orderDate)");
+    assertThat(repoContent).contains("sortValue(orderDate)");
+  }
+
+  @Test
+  void generatesRepositoryWithMultipleGSIs() throws Exception {
+    TableMetadata metaWithGsis = new TableMetadata(
+        "OrdersTable",
+        "arn:aws:dynamodb:us-east-1:123:table/OrdersTable",
+        "us-east-1",
+        List.of(
+            new TableMetadata.GSIMetadata("customer-index", "customerId", null, "ALL"),
+            new TableMetadata.GSIMetadata("status-index", "status", "createdAt", "ALL")
+        ),
+        null
+    );
+
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Order entity";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "orderId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "orderId";
+    orderId.type = "string";
+
+    schema.fields = List.of(orderId);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, metaWithGsis);
+
+    String repoContent = Files.readString(out.resolve("com/example/model/repository/OrderRepository.java"));
+
+    // Both GSI query methods present
+    assertThat(repoContent).contains("queryByCustomerIndex(String customerId)");
+    assertThat(repoContent).contains("queryByStatusIndex(String status)");
+    assertThat(repoContent).contains("queryByStatusIndex(String status, String createdAt)");
+  }
+
+  @Test
+  void generatesRepositoryWithLSI() throws Exception {
+    TableMetadata metaWithLsi = new TableMetadata(
+        "OrdersTable",
+        "arn:aws:dynamodb:us-east-1:123:table/OrdersTable",
+        "us-east-1",
+        null,
+        List.of(new TableMetadata.LSIMetadata("amount-index", "orderId", "amount", "ALL"))
+    );
+
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Order entity";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "orderId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "orderId";
+    orderId.type = "string";
+
+    schema.fields = List.of(orderId);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, metaWithLsi);
+
+    String repoContent = Files.readString(out.resolve("com/example/model/repository/OrderRepository.java"));
+
+    // LSI query method
+    assertThat(repoContent).contains("queryByAmountIndex(String orderId)");
+    assertThat(repoContent).contains("queryByAmountIndex(String orderId, String amount)");
+    assertThat(repoContent).contains("table.index(\"amount-index\")");
+  }
+
+  @Test
+  void generatesKeysHelperWithIndexConstants() throws Exception {
+    TableMetadata metaWithIndexes = new TableMetadata(
+        "OrdersTable",
+        "arn:aws:dynamodb:us-east-1:123:table/OrdersTable",
+        "us-east-1",
+        List.of(
+            new TableMetadata.GSIMetadata("customer-index", "customerId", null, "ALL"),
+            new TableMetadata.GSIMetadata("status-date-index", "status", "createdAt", "ALL")
+        ),
+        List.of(new TableMetadata.LSIMetadata("amount-index", "orderId", "amount", "ALL"))
+    );
+
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = 1.1;
+    schema.entityName = "Order";
+    schema.description = "Order entity";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "orderId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderId = new BprintSchema.Field();
+    orderId.name = "orderId";
+    orderId.type = "string";
+
+    schema.fields = List.of(orderId);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, metaWithIndexes);
+
+    String keysContent = Files.readString(out.resolve("com/example/model/keys/OrderKeys.java"));
+
+    // GSI index constants
+    assertThat(keysContent).contains("INDEX_CUSTOMER_INDEX = \"customer-index\"");
+    assertThat(keysContent).contains("INDEX_STATUS_DATE_INDEX = \"status-date-index\"");
+
+    // LSI index constant
+    assertThat(keysContent).contains("INDEX_AMOUNT_INDEX = \"amount-index\"");
+  }
+
+  @Test
+  void repositoryWithNoIndexesHasNoQueryMethods() throws Exception {
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(userSchema), "com.example.model", out, tableMetadata);
+
+    String repoContent = Files.readString(out.resolve("com/example/model/repository/UserRepository.java"));
+
+    // No queryBy methods should be present
+    assertThat(repoContent).doesNotContain("queryBy");
+    assertThat(repoContent).doesNotContain("DynamoDbIndex");
+    assertThat(repoContent).doesNotContain("QueryConditional");
+  }
+
+  @Test
+  void toConstantCaseConvertsCorrectly() {
+    assertThat(JavaGenerator.toConstantCase("customer-index")).isEqualTo("CUSTOMER_INDEX");
+    assertThat(JavaGenerator.toConstantCase("status-date-index")).isEqualTo("STATUS_DATE_INDEX");
+    assertThat(JavaGenerator.toConstantCase("customerIndex")).isEqualTo("CUSTOMER_INDEX");
+    assertThat(JavaGenerator.toConstantCase("amount_index")).isEqualTo("AMOUNT_INDEX");
+  }
+
+  @Test
+  void toCamelCaseConvertsCorrectly() {
+    assertThat(JavaGenerator.toCamelCase("customer-index")).isEqualTo("customerIndex");
+    assertThat(JavaGenerator.toCamelCase("status-date-index")).isEqualTo("statusDateIndex");
+    assertThat(JavaGenerator.toCamelCase("customerId")).isEqualTo("customerId");
+    assertThat(JavaGenerator.toCamelCase("amount_index")).isEqualTo("amountIndex");
   }
 }
