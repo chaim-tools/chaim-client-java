@@ -42,14 +42,14 @@
   },
   "homepage": "https://github.com/chaim-tools/chaim-client-java#readme",
   "dependencies": {
-    "@chaim-tools/chaim-bprint-spec": "^0.2.1",
+    "@chaim-tools/chaim-bprint-spec": "^0.2.4",
     "chalk": "^4.1.2"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
-    "typescript": "^5.0.0",
-    "eslint": "^8.0.0",
     "@typescript-eslint/eslint-plugin": "^6.21.0",
-    "@typescript-eslint/parser": "^6.21.0"
+    "@typescript-eslint/parser": "^6.21.0",
+    "eslint": "^8.0.0",
+    "typescript": "^5.0.0"
   }
 }
