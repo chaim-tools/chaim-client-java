@@ -1,572 +1,477 @@
 # AI Agent Context: chaim-client-java
 
-**Purpose**: Structured context for AI agents to understand and modify the chaim-client-java repository.  
-This package is a hybrid Node and Java code generator that converts bprint schemas into production-ready Java source code with DynamoDB Enhanced Client integration.
+**Purpose**: Structured context for AI agents working in the chaim-client-java package.
 
-**Package**: `@chaim-tools/client-java`  
-**Version**: 0.1.0  
+**Package**: `@chaim-tools/client-java`
+**Version**: 0.1.3
 **License**: Apache-2.0
 
 ---
 
-## What this repo does
+## What This Package Does
 
-chaim-client-java generates **production-ready Java source code** from schema JSON and datastore metadata.  
-It is an **internal dependency** of `chaim-cli` — end users should not invoke it directly.
+A hybrid Java/TypeScript package that generates production-ready Java source files from `.bprint` schemas and DynamoDB table metadata. It is an internal dependency of `chaim-cli` — end users invoke the CLI, which delegates to this generator.
 
-**Invocation model**:
-- End users run `chaim generate --language java --package com.example.model`
-- chaim-cli reads OS cache snapshots and invokes this package internally
-- Direct JAR invocation is only for local development/testing
-
-**Data flow**:
-```
-.bprint file → chaim-cdk → OS cache snapshot → chaim-cli → chaim-client-java → .java files
-     ↑             ↑                               ↑
-user defines   user deploys                   user generates
-```
-
-> **Note**: This package does not read `.bprint` files or OS cache snapshots directly. It receives parsed schema JSON from `chaim-cli`.
-
-**Primary outputs**:
-- Entity DTOs with DynamoDB Enhanced Client annotations on **schema-defined keys**
-- Key constants helpers (`{Entity}Keys.java`)
-- Repository classes with key-based CRUD operations
-- DI-friendly DynamoDB client wrapper (`ChaimDynamoDbClient.java`)
-- Configuration with repository factory methods (`ChaimConfig.java`)
+The generator uses JavaPoet to emit:
+- Entity DTOs with DynamoDB Enhanced Client annotations and Lombok
+- Key helpers with constants and factory methods
+- Repositories with CRUD operations and GSI/LSI query methods
+- Validators with constraint enforcement
+- A DI-friendly DynamoDB client wrapper
+- A configuration class with table constants and repository factories
 
 ---
 
-## Schema-Driven Keys (Core Design)
+## Relationship to Other Packages
 
-When you define your `.bprint` schema (v1.1):
-```json
-{
-  "schemaVersion": 1.1,
-  "entityName": "User",
-  "description": "User entity",
-  "primaryKey": {
-    "partitionKey": "userId",    // ← This field gets @DynamoDbPartitionKey
-    "sortKey": "entityType"       // ← This field gets @DynamoDbSortKey
-  },
-  "fields": [
-    { "name": "userId", "type": "string" },
-    { "name": "entityType", "type": "string" },
-    { "name": "email", "type": "string" }
-  ]
-}
-```
+| Package | Relationship |
+|---------|-------------|
+| `@chaim-tools/chaim` (chaim-cli) | Consumer — invokes `JavaGenerator` via TypeScript wrapper |
+| `@chaim-tools/chaim-bprint-spec` | Schema format — Java model (`BprintSchema.java`) mirrors TypeScript types |
+| `@chaim-tools/cdk-lib` (chaim-cdk) | Upstream — produces snapshots with schema + table metadata |
 
-The generator annotates **your fields** with DynamoDB annotations:
-```java
-@DynamoDbBean
-public class User {
-    private String userId;      // Your partition key
-    private String entityType;  // Your sort key
-    private String email;
-
-    @DynamoDbPartitionKey
-    public String getUserId() { return userId; }
-
-    @DynamoDbSortKey
-    public String getEntityType() { return entityType; }
-}
-```
-
-**Benefits**:
-- ✅ **Drop-in replacement** — Generated code matches existing table structure
-- ✅ **Data migration friendly** — No key transformation needed
-- ✅ **Schema is truth** — Single source of truth for key structure
-- ✅ **Existing data compatible** — Works with tables that already have data
+**Invocation path**: `chaim generate` → CLI discovers snapshots → CLI calls `JavaGenerator.generateForTable()` → TypeScript wrapper spawns Java process → Java generator writes `.java` files
 
 ---
 
-## Multi-Entity Table Support
+## Technology Stack
 
-Multiple entities can share the same DynamoDB table if they have **matching PK/SK field names**:
-
-```
-Table: DataTable (PK: userId, SK: entityType)
-├── User   → primaryKey: { partitionKey: "userId", sortKey: "entityType" } ✅
-├── Order  → primaryKey: { partitionKey: "userId", sortKey: "entityType" } ✅
-└── Product → primaryKey: { partitionKey: "productId", sortKey: "category" } ❌ ERROR!
-```
-
-**Validation**: chaim-cli validates that all entities bound to the same table have matching PK/SK field names before generation.
-
----
-
-## How it works
-
-**Runtime flow**:
-1. chaim-cli groups snapshots by physical table (using `tableArn` or composite key)
-2. chaim-cli validates PK/SK consistency across all entities for each table
-3. chaim-cli calls `JavaGenerator.generateForTable()` with all schemas for a table
-4. The TypeScript wrapper spawns `java -jar` with schemas and metadata as JSON
-5. The Java generator parses JSON and writes Java files to the output directory
-
-```mermaid
-flowchart LR
-    CLI["chaim-cli (Node.js)<br/>groups by table<br/>validates PK/SK<br/>calls generateForTable()"]
-    TS["TypeScript wrapper<br/>resolves JAR path<br/>spawns java process"]
-    JAR["Java generator JAR<br/>parses schema JSON<br/>generates .java files"]
-    OUT["Generated .java files<br/>per entity + shared infra"]
-
-    CLI --> TS --> JAR --> OUT
-```
+| Component | Technology |
+|-----------|------------|
+| Code generation | JavaPoet 1.13.0 |
+| Schema parsing | Jackson 2.15.2 |
+| DynamoDB SDK | AWS SDK v2 Enhanced Client 2.21.29 |
+| Annotations | Lombok 1.18.30 |
+| Build | Gradle 9, Java 22 |
+| TypeScript wrapper | Node.js 18+ |
+| Testing | JUnit 5, AssertJ |
 
 ---
 
-## Inputs and outputs
-
-**Inputs**:
-- Array of schema JSON objects (extracted from OS cache snapshots by chaim-cli)
-- Java package name
-- Output directory
-- Table metadata JSON (tableName, tableArn, region)
-
-**Outputs**:
-- `.java` files written to the output directory under the provided package namespace
-
----
-
-## CLI interface
-
-Java is invoked with **multiple schemas**:
-
-```bash
-# Inline JSON array
-java -jar codegen-java.jar \
-  --schemas '[{"schemaVersion":1.1,"entityName":"User",...},{"schemaVersion":1.1,"entityName":"Order",...}]' \
-  --package com.example.model \
-  --output ./src/main/java \
-  --table-metadata '{"tableName":"DataTable","tableArn":"arn:..."}'
-
-# File-based (for large payloads)
-java -jar codegen-java.jar \
-  --schemas-file /tmp/schemas.json \
-  --package com.example.model \
-  --output ./src/main/java \
-  --table-metadata '{"tableName":"DataTable",...}'
-```
-
-| Argument | Required | Description |
-|----------|----------|-------------|
-| `--schemas` | Yes* | JSON array of schema objects |
-| `--schemas-file` | Yes* | Path to file containing JSON array of schemas |
-| `--package` | Yes | Java package name |
-| `--output` | Yes | Output directory |
-| `--table-metadata` | No | Table metadata JSON string |
-
-*One of `--schemas` or `--schemas-file` is required.
-
----
-
-## Repository structure
+## Repository Structure
 
 ```
 chaim-client-java/
-├── schema-core/          # Schema loading and validation
-├── codegen-java/         # Java generator engine (includes TableMetadata)
-├── src/                  # TypeScript wrapper source
-└── dist/                 # Compiled TypeScript and bundled JARs
+├── schema-core/                          # Java schema model
+│   └── src/main/java/co/chaim/core/model/
+│       └── BprintSchema.java             # Java model with Jackson annotations
+├── codegen-java/                         # Code generation engine
+│   ├── src/main/java/co/chaim/generators/java/
+│   │   ├── Main.java                     # CLI entry point
+│   │   ├── JavaGenerator.java            # All code generation logic
+│   │   └── TableMetadata.java            # Table + GSI/LSI metadata record
+│   └── src/test/java/co/chaim/generators/java/
+│       └── JavaGeneratorTest.java        # 57 tests
+├── src/
+│   └── index.ts                          # TypeScript wrapper
+├── dist/
+│   ├── index.js                          # Compiled wrapper
+│   └── jars/
+│       └── codegen-java-0.1.0.jar        # Bundled fat JAR
+├── build.gradle.kts                      # Root Gradle config (Java 22)
+└── package.json
 ```
 
 ---
 
-## Modules
+## BprintSchema.java (Java Model)
 
-### schema-core
-
-**Responsibilities**:
-- Load bprint JSON
-- Validate schema shape
-- Map field types
-
-**Key classes**:
-| Class | Purpose |
-|-------|---------|
-| `BprintLoader` | Loads schema JSON using Jackson |
-| `BprintValidator` | Validates structure and fields |
-| `FieldType` | Maps bprint types to Java types |
-| `BprintSchema` | Jackson model for schema |
-
-### codegen-java
-
-**Responsibilities**:
-- Parse command-line args
-- Parse schema and metadata JSON payloads
-- Generate Java source files via JavaPoet
-
-**Key classes**:
-| Class | Purpose |
-|-------|---------|
-| `Main` | Entry point for `java -jar` |
-| `JavaGenerator` | Generates DTOs, keys, repositories, client, config |
-| `TableMetadata` | Simple record for table metadata (tableName, tableArn, region) |
-
----
-
-## Generated output layout
-
-Example: `--package com.example.model` with User and Order schemas
-
-```
-com/example/model/
-├── User.java                      # Entity DTO with schema-defined keys
-├── Order.java                     # Entity DTO with schema-defined keys
-├── keys/
-│   ├── UserKeys.java              # Key constants and helpers
-│   └── OrderKeys.java             # Key constants and helpers
-├── repository/
-│   ├── UserRepository.java        # Key-based CRUD
-│   └── OrderRepository.java       # Key-based CRUD
-├── client/
-│   └── ChaimDynamoDbClient.java   # DI-friendly client wrapper
-└── config/
-    └── ChaimConfig.java           # Constants + repository factories
-```
-
----
-
-## Generated artifacts detail
-
-### Entity DTO (`User.java`)
-
-Uses **schema-defined keys** — no invented `pk`/`sk` fields:
+Mirrors the TypeScript types from `chaim-bprint-spec`:
 
 ```java
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
-@DynamoDbBean
-public class User {
-    private String userId;      // Schema-defined partition key
-    private String entityType;  // Schema-defined sort key (if present)
-    private String email;
+public class BprintSchema {
+    public String schemaVersion;
+    public String entityName;
+    public String description;
+    public PrimaryKey primaryKey;
+    public List<Field> fields;
+
+    public static class PrimaryKey {
+        public String partitionKey;
+        public String sortKey;
+    }
+
+    public static class Field {
+        public String name;
+        public String nameOverride;
+        public String type;           // string, number, boolean, timestamp, list, map, stringSet, numberSet
+        public Boolean required;
+        @JsonProperty("default") public Object defaultValue;
+        @JsonProperty("enum") public List<String> enumValues;
+        public String description;
+        public Constraints constraints;
+        public ListItems items;       // For list fields
+        public List<NestedField> fields;  // For map fields
+    }
+
+    public static class Constraints {
+        public Integer minLength, maxLength;
+        public String pattern;
+        public Double min, max;
+    }
+
+    public static class ListItems {
+        public String type;
+        public List<NestedField> fields;
+    }
+
+    public static class NestedField {
+        public String name;
+        public String type;
+    }
+}
+```
+
+---
+
+## TableMetadata.java
+
+```java
+public record TableMetadata(
+    String tableName,
+    String tableArn,
+    String region,
+    List<GSIMetadata> globalSecondaryIndexes,
+    List<LSIMetadata> localSecondaryIndexes
+) {
+    public record GSIMetadata(String indexName, String partitionKey, String sortKey, String projectionType) {}
+    public record LSIMetadata(String indexName, String sortKey, String projectionType) {}
+}
+```
+
+---
+
+## JavaGenerator.java — Method Reference
+
+### Entry Point
+
+| Method | Description |
+|--------|-------------|
+| `generateForTable(schemas, pkg, outDir, tableMetadata)` | Main API — generates all files for schemas sharing a table |
+
+### Per-Entity Generation
+
+| Method | Output File | Description |
+|--------|-------------|-------------|
+| `generateEntity()` | `{Entity}.java` | DTO with `@DynamoDbBean`, Lombok, inner classes for maps |
+| `generateEntityKeys()` | `keys/{Entity}Keys.java` | Key constants, INDEX_ constants, key() factory |
+| `generateRepository()` | `repository/{Entity}Repository.java` | CRUD + GSI/LSI query methods |
+| `generateValidator()` | `validation/{Entity}Validator.java` | Required/constraint/enum checks |
+
+### Shared Infrastructure (Once Per Table)
+
+| Method | Output File | Description |
+|--------|-------------|-------------|
+| `generateChaimDynamoDbClient()` | `client/ChaimDynamoDbClient.java` | DI-friendly client wrapper |
+| `generateChaimConfig()` | `config/ChaimConfig.java` | Constants + repository factories |
+| `generateChaimValidationException()` | `validation/ChaimValidationException.java` | Structured error class |
+
+### Type Mapping
+
+| Method | Description |
+|--------|-------------|
+| `mapFieldType(field, entityClass, innerClasses)` | Maps bprint type to Java TypeName; generates inner classes for map types |
+| `mapScalarType(type)` | Maps scalar type string to Java ClassName |
+| `mapListType(field, entityClass, innerClasses)` | Handles list fields; generates inner class for list<map> |
+| `mapMapType(field, entityClass, innerClasses)` | Handles standalone map fields; generates inner class |
+| `buildNestedBeanClass(className, nestedFields)` | Builds inner `@DynamoDbBean` class from nested field definitions |
+
+### Name Resolution
+
+| Method | Description |
+|--------|-------------|
+| `resolveCodeName(field)` | Uses `nameOverride` if set, otherwise auto-converts via `toJavaCamelCase()` |
+| `resolveKeyCodeName(schema, keyFieldName)` | Resolves code name for a key field |
+| `toJavaCamelCase(name)` | Converts hyphens/underscores to camelCase; prefixes leading digits with `_` |
+| `needsAttributeAnnotation(field, codeName)` | True when code name differs from DynamoDB attribute name |
+| `detectCollisions(fields)` | Throws if two fields resolve to the same Java identifier |
+
+### Index Query Generation
+
+| Method | Description |
+|--------|-------------|
+| `addIndexQueryMethods(tb, indexName, pk, sk, entityClass, listOfEntity)` | Adds `queryBy{IndexName}()` methods for a single GSI/LSI |
+
+### Utility
+
+| Method | Description |
+|--------|-------------|
+| `deriveEntityName(schema)` | Uses `entityName` or defaults to `"Entity"` |
+| `formatDefaultInitializer(fieldType, defaultValue)` | Formats default value as Java code |
+| `isCollectionType(type)` | True for list, map, stringSet, numberSet |
+| `toConstantCase(name)` | Converts to UPPER_SNAKE_CASE |
+| `toCamelCase(name)` | Converts to camelCase |
+| `cap(s)` / `uncap(s)` | Capitalize / uncapitalize first letter |
+
+---
+
+## Type Mappings
+
+| bprint Type | Java Type | Notes |
+|-------------|-----------|-------|
+| `string` | `String` | |
+| `number` | `Double` | |
+| `boolean` | `Boolean` | |
+| `timestamp` | `Instant` | `java.time.Instant` |
+| `list` (scalar) | `List<String>`, `List<Double>`, etc. | Parameterized based on `items.type` |
+| `list` (map) | `List<{FieldName}Item>` | Generates inner `@DynamoDbBean` static class |
+| `map` | `{FieldName}` inner class | Generates inner `@DynamoDbBean` static class |
+| `stringSet` | `Set<String>` | |
+| `numberSet` | `Set<Double>` | |
+| (unknown) | `Object` | Fallback |
+
+---
+
+## Annotation Placement
+
+**Critical**: All DynamoDB mapping annotations (`@DynamoDbPartitionKey`, `@DynamoDbSortKey`, `@DynamoDbAttribute`) have `@Target(ElementType.METHOD)` in AWS SDK v2. They go on getter methods, never on field declarations.
+
+The generator handles this by:
+1. Declaring private fields (no DynamoDB annotations on fields)
+2. Generating explicit getter methods for:
+   - Partition key → annotated with `@DynamoDbPartitionKey` (+ `@DynamoDbAttribute` if name differs)
+   - Sort key → annotated with `@DynamoDbSortKey` (+ `@DynamoDbAttribute` if name differs)
+   - Non-key fields where code name differs from DynamoDB name → annotated with `@DynamoDbAttribute`
+3. Lombok `@Data` generates getters for all remaining fields that do not have explicit getters
+
+The `generateEntity()` method resolves all field code names and types in a single pass (using a local `ResolvedField` record), then generates fields first, followed by explicit getter methods.
+
+---
+
+## Generated Code Patterns
+
+### Entity DTO
+
+```java
+@Data @Builder @NoArgsConstructor @AllArgsConstructor @DynamoDbBean
+public class Order {
+    private String orderId;
+    private String customerId;
+    private Double totalAmount;
+    private List<OrderLineItemsItem> lineItems;
+    private OrderShippingAddress shippingAddress;
+    private Set<String> tags;
 
     @DynamoDbPartitionKey
-    public String getUserId() { return userId; }
+    public String getOrderId() { return orderId; }
 
     @DynamoDbSortKey
-    public String getEntityType() { return entityType; }
+    public String getCustomerId() { return customerId; }
+
+    // Inner class for list<map>
+    @Data @NoArgsConstructor @AllArgsConstructor @DynamoDbBean
+    public static class OrderLineItemsItem { ... }
+
+    // Inner class for standalone map
+    @Data @NoArgsConstructor @AllArgsConstructor @DynamoDbBean
+    public static class OrderShippingAddress { ... }
 }
 ```
 
-### Key Constants (`UserKeys.java`)
-
-Provides constants for key field names and a convenience method:
+### Repository
 
 ```java
-public final class UserKeys {
-    public static final String PARTITION_KEY_FIELD = "userId";
-    public static final String SORT_KEY_FIELD = "entityType";  // If sort key defined
+public class OrderRepository {
+    private final DynamoDbTable<Order> table;
 
-    public static Key key(String userId, String entityType) {
-        return Key.builder()
-            .partitionValue(userId)
-            .sortValue(entityType)
-            .build();
+    public OrderRepository(ChaimDynamoDbClient client) { ... }
+    public OrderRepository(DynamoDbEnhancedClient client, String tableName) { ... }
+
+    public void save(Order entity) {
+        OrderValidator.validate(entity);
+        table.putItem(entity);
+    }
+
+    public Optional<Order> findByKey(String orderId, String customerId) {
+        Key key = OrderKeys.key(orderId, customerId);
+        return Optional.ofNullable(table.getItem(key));
+    }
+
+    public void deleteByKey(String orderId, String customerId) {
+        Key key = OrderKeys.key(orderId, customerId);
+        table.deleteItem(key);
+    }
+
+    // Generated per GSI
+    public List<Order> queryByCustomerIndex(String customerId) {
+        DynamoDbIndex<Order> index = table.index("customer-index");
+        QueryConditional condition = QueryConditional.keyEqualTo(
+            Key.builder().partitionValue(customerId).build());
+        List<Order> results = new ArrayList<>();
+        index.query(condition).forEach(page -> results.addAll(page.items()));
+        return results;
     }
 }
 ```
 
-### Repository (`UserRepository.java`)
-
-Uses schema-defined key parameters directly:
+### Validator
 
 ```java
-public class UserRepository {
-    private final DynamoDbTable<User> table;
+public final class OrderValidator {
+    public static void validate(Order entity) {
+        List<ChaimValidationException.FieldError> errors = new ArrayList<>();
 
-    // Constructor with ChaimDynamoDbClient
-    public UserRepository(ChaimDynamoDbClient client) { ... }
+        // Required field checks
+        if (entity.getOrderId() == null) {
+            errors.add(new ChaimValidationException.FieldError("orderId", "required", "is required but was null"));
+        }
 
-    // Constructor for DI/testing
-    public UserRepository(DynamoDbEnhancedClient enhancedClient, String tableName) { ... }
+        // String constraint checks
+        if (entity.getEmail() != null) {
+            if (entity.getEmail().length() < 5) {
+                errors.add(new ChaimValidationException.FieldError("email", "minLength", "must be at least 5 characters"));
+            }
+        }
 
-    public void save(User entity) { ... }
-    public Optional<User> findByKey(String userId, String entityType) { ... }
-    public void deleteByKey(String userId, String entityType) { ... }
-    // NOTE: No findAll() or scan() - intentionally omitted
-}
-```
+        // Enum checks
+        if (entity.getStatus() != null && !Set.of("pending", "confirmed", "shipped").contains(entity.getStatus())) {
+            errors.add(new ChaimValidationException.FieldError("status", "enum", "must be one of [pending, confirmed, shipped]"));
+        }
 
----
-
-## DynamoDB Operations Matrix
-
-This matrix shows which DynamoDB operations are available in the generated repository and their current status.
-
-### Repository CRUD Operations
-
-| Operation | Method | Status | Description |
-|-----------|--------|--------|-------------|
-| **Create** | `save(entity)` | ✅ Available | Insert or replace item (PutItem) |
-| **Read (by key)** | `findByKey(pk, sk)` | ✅ Available | Get single item by primary key |
-| **Update** | `save(entity)` | ✅ Available | Full item replacement (PutItem) |
-| **Delete** | `deleteByKey(pk, sk)` | ✅ Available | Remove item by primary key |
-
-### Query & Scan Operations
-
-| Operation | Method | Status | Description |
-|-----------|--------|--------|-------------|
-| **Scan** | `findAll()` | ❌ Not Available | Full table scan — intentionally omitted (NoSQL anti-pattern) |
-| **Query (by PK)** | `queryByPartitionKey()` | 🔜 Backlog | Query all items with same partition key |
-| **Query (with SK condition)** | `queryByPartitionKeyAndSortKeyBeginsWith()` | 🔜 Backlog | Query with sort key prefix |
-| **Query (GSI)** | `queryByGsi()` | 🔜 Backlog | Query using Global Secondary Index |
-| **Query (LSI)** | `queryByLsi()` | 🔜 Backlog | Query using Local Secondary Index |
-
-### Batch Operations
-
-| Operation | Method | Status | Description |
-|-----------|--------|--------|-------------|
-| **Batch Write** | `saveAll(entities)` | 🔜 Backlog | Batch put multiple items |
-| **Batch Get** | `findAllByKeys(keys)` | 🔜 Backlog | Batch get multiple items by keys |
-| **Batch Delete** | `deleteAllByKeys(keys)` | 🔜 Backlog | Batch delete multiple items |
-
-### Conditional & Transactional Operations
-
-| Operation | Method | Status | Description |
-|-----------|--------|--------|-------------|
-| **Conditional Put** | `saveIfNotExists(entity)` | 🔜 Backlog | Put only if item doesn't exist |
-| **Conditional Update** | `updateWithCondition()` | 🔜 Backlog | Update with condition expression |
-| **Transact Write** | `transactSave(entities)` | 🔜 Backlog | ACID transaction across items |
-| **Transact Get** | `transactFind(keys)` | 🔜 Backlog | Consistent read across items |
-
-### Partial Update Operations
-
-| Operation | Method | Status | Description |
-|-----------|--------|--------|-------------|
-| **Update Attribute** | `updateAttribute(pk, sk, attr, value)` | 🔜 Backlog | Update single attribute |
-| **Increment Counter** | `incrementCounter(pk, sk, attr, delta)` | 🔜 Backlog | Atomic counter increment |
-| **Append to List** | `appendToList(pk, sk, attr, values)` | 🔜 Backlog | Append values to list attribute |
-
-### Status Legend
-
-| Symbol | Meaning |
-|--------|---------|
-| ✅ | Available — generated and ready to use |
-| 🔜 | Backlog — planned for future release |
-| ❌ | Not Available — intentionally omitted |
-
-### Design Decisions
-
-**Why no `scan()` / `findAll()`?**
-
-Full table scans are intentionally omitted because:
-1. **Cost** — Scans read every item, incurring high read capacity costs
-2. **Performance** — Scans don't scale; response time grows with table size
-3. **Best Practice** — NoSQL requires explicit access patterns, not ad-hoc queries
-
-If you need all items, define a GSI with a known partition key pattern (e.g., `GSI1PK = "ENTITY#User"`) and use `queryByGsi()` when available.
-
-**Why PutItem instead of UpdateItem for save()?**
-
-The current `save()` uses `PutItem` which replaces the entire item. This is simpler and covers most use cases. Partial updates via `UpdateItem` are on the backlog for scenarios where you need to update specific attributes without fetching the full item first.
-
----
-
-### DI-Friendly Client (`ChaimDynamoDbClient.java`)
-
-```java
-public class ChaimDynamoDbClient {
-    public static Builder builder() { ... }
-    public static ChaimDynamoDbClient wrap(DynamoDbEnhancedClient client, String tableName) { ... }
-
-    public DynamoDbEnhancedClient getEnhancedClient() { ... }
-    public String getTableName() { ... }
-
-    public static class Builder {
-        public Builder tableName(String tableName) { ... }
-        public Builder region(String region) { ... }
-        public Builder endpoint(String endpoint) { ... }  // For local DynamoDB
-        public Builder existingClient(DynamoDbEnhancedClient client) { ... }  // For DI
-        public ChaimDynamoDbClient build() { ... }
+        if (!errors.isEmpty()) {
+            throw new ChaimValidationException("Order", errors);
+        }
     }
 }
 ```
 
-### Configuration (`ChaimConfig.java`)
+### Keys Helper
 
 ```java
-public class ChaimConfig {
-    public static final String TABLE_NAME = "DataTable";
-    public static final String TABLE_ARN = "arn:aws:dynamodb:...";
-    public static final String REGION = "us-east-1";
+public final class OrderKeys {
+    public static final String PARTITION_KEY_FIELD = "orderId";
+    public static final String SORT_KEY_FIELD = "customerId";
+    public static final String INDEX_CUSTOMER_INDEX = "customer-index";
 
-    public static ChaimDynamoDbClient getClient() { ... }  // Lazy singleton
-    public static ChaimDynamoDbClient.Builder clientBuilder() { ... }
-
-    // Repository factory methods
-    public static UserRepository userRepository() { ... }
-    public static UserRepository userRepository(ChaimDynamoDbClient client) { ... }
-    public static OrderRepository orderRepository() { ... }
-    public static OrderRepository orderRepository(ChaimDynamoDbClient client) { ... }
+    public static Key key(String orderId, String customerId) {
+        return Key.builder().partitionValue(orderId).sortValue(customerId).build();
+    }
 }
 ```
 
 ---
 
-## Type mapping
+## Operations Status
 
-| bprint type | Java type |
-|-------------|-----------|
-| `string` | `String` |
-| `number` | `Double` |
-| `boolean` | `Boolean` |
-| `timestamp` | `Instant` |
-| (unknown) | `Object` |
+### Available Operations
+
+| Operation | Method | Description |
+|-----------|--------|-------------|
+| Create/Replace | `save(entity)` | Validates then `putItem` (full replacement) |
+| Read | `findByKey(pk)` / `findByKey(pk, sk)` | Returns `Optional<Entity>` |
+| Delete | `deleteByKey(pk)` / `deleteByKey(pk, sk)` | Removes item |
+| GSI Query | `queryBy{IndexName}(pk)` | Query by GSI partition key |
+| GSI Query (with SK) | `queryBy{IndexName}(pk, sk)` | Query by GSI PK + SK |
+| LSI Query | `queryBy{IndexName}(pk)` | Query by LSI partition key |
+
+### Backlog Operations
+
+| Operation | Status | Description |
+|-----------|--------|-------------|
+| Scan / findAll | Intentionally omitted | DynamoDB anti-pattern |
+| Partial update | Backlog | Update specific attributes via UpdateItem |
+| Batch write/get/delete | Backlog | Batch operations |
+| Conditional put | Backlog | `saveIfNotExists` |
+| Transactions | Backlog | ACID across items |
+| Counter increment | Backlog | Atomic counters |
 
 ---
 
-## Annotations used
+## TypeScript Wrapper (`src/index.ts`)
 
-| Annotation | Source | Purpose |
-|------------|--------|---------|
-| `@DynamoDbBean` | AWS SDK | Marks class as DynamoDB entity |
-| `@DynamoDbPartitionKey` | AWS SDK | Marks partition key getter (on schema-defined field) |
-| `@DynamoDbSortKey` | AWS SDK | Marks sort key getter (on schema-defined field) |
-| `@Data` | Lombok | Generates getters, setters, equals, hashCode, toString |
-| `@Builder` | Lombok | Generates builder pattern |
-| `@NoArgsConstructor` | Lombok | Generates no-args constructor |
-| `@AllArgsConstructor` | Lombok | Generates all-args constructor |
+The `JavaGenerator` TypeScript class:
+1. Locates the fat JAR (bundled `dist/jars/` or dev `codegen-java/build/libs/`)
+2. Serializes schemas and table metadata to JSON
+3. Spawns: `java -jar codegen-java.jar --schemas <json> --package <pkg> --output <dir> --table-metadata <json>`
+4. For payloads >100KB, writes JSON to a temp file and passes `--schemas-file <path>`
+5. Streams stdout/stderr, cleans up temp files
 
 ---
 
-## Build and packaging
+## Test Coverage (57 Tests)
 
-One command builds everything:
+| Category | Count | What It Covers |
+|----------|-------|---------------|
+| Entity generation | 11 | PK/SK annotations, Lombok, field types, Javadoc |
+| Keys helper | 4 | Constants, key() methods, index constants |
+| Repository | 5 | CRUD, validation integration |
+| Shared infrastructure | 2 | Client wrapper, config class |
+| Multi-entity | 2 | Single-table design |
+| Name resolution | 10 | nameOverride, auto-conversion, collisions |
+| Validation | 18 | Required, constraints, enums, error messages |
+| Default values | 4 | String, boolean, number, mixed |
+| Collection types | 8 | Lists, maps, sets, inner classes |
+| GSI/LSI queries | 5 | Index query methods, constants |
+
+Tests verify generated code as string content. They do not compile the generated Java files.
+
+---
+
+## Build and Packaging
 
 ```bash
-npm run build
+npm run build           # Full: Gradle build + TypeScript compile + bundle JAR
+./gradlew build         # Java modules only
+./gradlew test          # Run 57 Java tests
+npm run build:ts        # TypeScript wrapper only
+npm run clean           # Clean all artifacts
 ```
 
-**Steps**:
-1. Gradle builds Java modules and JAR
-2. TypeScript compiles to dist
-3. JAR is copied into `dist/jars/` for npm publishing
+### JAR Resolution Order
 
-**Published artifacts**:
+1. Bundled (npm install): `dist/jars/codegen-java-*.jar`
+2. Development (local): `codegen-java/build/libs/codegen-java-*.jar`
+
+### Published Artifacts
+
 - `dist/index.js` — TypeScript wrapper
 - `dist/jars/codegen-java-0.1.0.jar` — Fat JAR with all dependencies
 
 ---
 
-## JAR resolution logic
-
-The wrapper checks for JAR in this order:
-1. **Bundled** (npm install): `dist/jars/codegen-java-*.jar`
-2. **Development** (local): `codegen-java/build/libs/codegen-java-*.jar`
-
----
-
-## Entity name derivation
-
-The generator uses the `entityName` field directly:
-
-```java
-// Priority: entityName (required in v1.1) > "Entity" fallback
-private String deriveEntityName(BprintSchema schema) {
-    if (schema.entityName != null && !schema.entityName.isEmpty()) {
-        return schema.entityName;
-    }
-    return "Entity";  // Fallback for schemas without entityName
-}
-```
-
----
-
-## Integration with chaim-cli
-
-chaim-cli imports `JavaGenerator` from `@chaim-tools/client-java`:
-
-```typescript
-import { JavaGenerator } from '@chaim-tools/client-java';
-
-const generator = new JavaGenerator();
-
-await generator.generateForTable(
-  schemas,          // Array of schema objects
-  packageName,      // --package flag
-  outputDir,        // --output flag
-  tableMetadata     // { tableName, tableArn, region }
-);
-```
-
----
-
-## Key files to modify
+## Key Files to Modify
 
 | Task | File |
 |------|------|
-| Change wrapper spawn logic | `src/index.ts` |
-| Change arg parsing | `codegen-java/.../Main.java` |
-| Change code generation | `codegen-java/.../JavaGenerator.java` |
-| Change schema model | `schema-core/.../BprintSchema.java` |
+| Add/change generated entity fields | `JavaGenerator.java` → `generateEntity()` |
+| Add/change repository operations | `JavaGenerator.java` → `generateRepository()` |
+| Add/change validation logic | `JavaGenerator.java` → `generateValidator()` |
+| Add new field type mapping | `JavaGenerator.java` → `mapFieldType()`, `mapScalarType()` |
+| Change key helper | `JavaGenerator.java` → `generateEntityKeys()` |
+| Change client wrapper | `JavaGenerator.java` → `generateChaimDynamoDbClient()` |
+| Change config class | `JavaGenerator.java` → `generateChaimConfig()` |
+| Change Java schema model | `schema-core/.../BprintSchema.java` |
 | Change table metadata shape | `codegen-java/.../TableMetadata.java` |
+| Change wrapper spawn logic | `src/index.ts` |
+| Change CLI arg parsing | `codegen-java/.../Main.java` |
 
 ---
 
-## Requirements
+## Design Decisions
 
-| Component | Version |
-|-----------|---------|
-| **Java** | **17 LTS** (runtime — JAR is compiled with `--release 17`) |
-| **Node.js** | 18+ |
-| **Gradle** | 8+ |
+### Schema-Defined Keys Only
 
-> ✅ **Java 17 LTS** is required at runtime. This ensures broad enterprise compatibility.
+The generator uses exactly the PK/SK field names from the `.bprint` schema. It does not invent `pk`/`sk` fields. This means generated code works with existing DynamoDB tables and data.
 
----
+### PutItem for save()
 
-## Common tasks and where to edit
+`save()` uses `PutItem` (full item replacement). Partial updates via `UpdateItem` are a backlog feature.
 
-| Task | Where |
-|------|-------|
-| Add a new bprint field type | `schema-core/.../FieldType.java` and `codegen-java/.../JavaGenerator.java` (mapType) |
-| Change repository methods | `codegen-java/.../JavaGenerator.java` (generateRepository) |
-| Add a new generated file | `codegen-java/.../JavaGenerator.java` (add new generate method) |
-| Add new table metadata fields | `codegen-java/.../TableMetadata.java` |
-| Change CLI argument parsing | `codegen-java/.../Main.java` |
-| Change key helper logic | `codegen-java/.../JavaGenerator.java` (generateEntityKeys) |
-| Change client builder | `codegen-java/.../JavaGenerator.java` (generateChaimDynamoDbClient) |
+### No Scan
+
+`scan()` / `findAll()` is intentionally omitted. Full table scans are a DynamoDB anti-pattern.
+
+### Inner Classes for Nested Types
+
+`list<map>` and standalone `map` fields generate inner static classes annotated with `@DynamoDbBean`. Inner class naming: `{FieldName}Item` for list-of-map, `{FieldName}` (capitalized) for standalone map. Each inner class gets `@Data`, `@NoArgsConstructor`, `@AllArgsConstructor` from Lombok.
 
 ---
 
-## Non-goals
+## Non-Goals
 
-This package does **not**:
-- Deploy AWS resources (that's chaim-cdk)
+This package does NOT:
+- Deploy AWS resources (that is chaim-cdk)
+- Read `.bprint` files from disk — receives schema JSON from chaim-cli
 - Validate cloud account permissions
-- Parse bprint from disk — it receives schema JSON from chaim-cli
-- Generate code for languages other than Java (v1 DynamoDBMapper support planned)
-- Generate `scan()` or `findAll()` methods (NoSQL anti-pattern)
-- Invent `pk`/`sk` fields — uses schema-defined keys only
-
----
-
-## Related packages
-
-| Package | Relationship | Purpose |
-|---------|--------------|---------|
-| `chaim-cli` | **Consumer** | Invokes JavaGenerator for SDK generation |
-| `@chaim-tools/chaim-bprint-spec` | **Schema format** | Defines .bprint schema structure |
-| `@chaim-tools/cdk-lib` | **Upstream** | Produces snapshots with schema + metadata |
-
----
-
-## Development commands
-
-| Command | Purpose |
-|---------|---------|
-| `npm run build` | Full build (Java + TypeScript + bundle) |
-| `./gradlew build` | Build Java modules only |
-| `./gradlew test` | Run Java tests |
-| `npm run build:ts` | Compile TypeScript only |
-| `npm run clean` | Clean all build artifacts |
-
----
-
-**Note**: This repo is hybrid by design. TypeScript provides the stable interface for chaim-cli. Java does the actual generation using JavaPoet. The JAR is bundled for npm distribution.
+- Generate scan() or findAll() methods
+- Support languages other than Java (planned)

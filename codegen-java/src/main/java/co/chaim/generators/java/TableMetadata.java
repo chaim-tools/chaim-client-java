@@ -62,23 +62,22 @@ public record TableMetadata(
 
     /**
      * Metadata for a Local Secondary Index.
+     * LSIs always share the table's partition key, so no partitionKey field is needed.
+     * This matches the CDK snapshot shape (chaim-cdk LSIMetadata).
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record LSIMetadata(
         String indexName,
-        String partitionKey,
         String sortKey,
         String projectionType
     ) {
         @JsonCreator
         public LSIMetadata(
             @JsonProperty("indexName") String indexName,
-            @JsonProperty("partitionKey") String partitionKey,
             @JsonProperty("sortKey") String sortKey,
             @JsonProperty("projectionType") String projectionType
         ) {
             this.indexName = indexName;
-            this.partitionKey = partitionKey;
             this.sortKey = sortKey;
             this.projectionType = projectionType;
         }

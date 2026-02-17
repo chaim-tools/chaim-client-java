@@ -21,7 +21,7 @@ public class BprintSchemaTest {
     field = new BprintSchema.Field();
 
     // Setup valid schema
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Basic order management system";
 
@@ -40,7 +40,7 @@ public class BprintSchemaTest {
   @Test
   void shouldCreateValidSchema() {
     assertThat(schema).isNotNull();
-    assertThat(schema.schemaVersion).isEqualTo(1.1);
+    assertThat(schema.schemaVersion).isEqualTo("1.1");
     assertThat(schema.entityName).isEqualTo("Order");
     assertThat(schema.description).isEqualTo("Basic order management system");
     assertThat(schema.primaryKey).isNotNull();
@@ -99,11 +99,11 @@ public class BprintSchemaTest {
 
   @Test
   void shouldHandleSpecialCharacters() {
-    schema.schemaVersion = 1.5;
+    schema.schemaVersion = "1.5";
     schema.entityName = "Order-v2";
     schema.description = "Order management system with special chars: @#$%^&*()";
 
-    assertThat(schema.schemaVersion).isEqualTo(1.5);
+    assertThat(schema.schemaVersion).isEqualTo("1.5");
     assertThat(schema.entityName).isEqualTo("Order-v2");
     assertThat(schema.description).isEqualTo("Order management system with special chars: @#$%^&*()");
   }
@@ -111,14 +111,14 @@ public class BprintSchemaTest {
   @Test
   void shouldHandleSchemaVersionVariants() {
     // Test different numeric versions
-    schema.schemaVersion = 2.0;
-    assertThat(schema.schemaVersion).isEqualTo(2.0);
+    schema.schemaVersion = "2.0";
+    assertThat(schema.schemaVersion).isEqualTo("2.0");
 
-    schema.schemaVersion = 1.1;
-    assertThat(schema.schemaVersion).isEqualTo(1.1);
+    schema.schemaVersion = "1.1";
+    assertThat(schema.schemaVersion).isEqualTo("1.1");
 
-    schema.schemaVersion = 0.5;
-    assertThat(schema.schemaVersion).isEqualTo(0.5);
+    schema.schemaVersion = "0.5";
+    assertThat(schema.schemaVersion).isEqualTo("0.5");
   }
 
   @Test
@@ -431,7 +431,7 @@ public class BprintSchemaTest {
   void shouldHandleComplexNestedStructure() {
     // Create a complex schema structure
     BprintSchema complexSchema = new BprintSchema();
-    complexSchema.schemaVersion = 1.1;
+    complexSchema.schemaVersion = "1.1";
     complexSchema.entityName = "ComplexEntity";
     complexSchema.description = "A complex entity with many fields";
 

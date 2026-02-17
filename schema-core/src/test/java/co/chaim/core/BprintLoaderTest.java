@@ -22,7 +22,7 @@ public class BprintLoaderTest {
   void setUp() {
     validJsonSchema = """
       {
-        "schemaVersion": 1.1,
+        "schemaVersion": "1.1",
         "entityName": "Order",
         "description": "Basic order management system",
         "primaryKey": { "partitionKey": "orderId" },
@@ -41,7 +41,7 @@ public class BprintLoaderTest {
     BprintSchema schema = BprintLoader.load(jsonFile);
 
     assertThat(schema).isNotNull();
-    assertThat(schema.schemaVersion).isEqualTo(1.1);
+    assertThat(schema.schemaVersion).isEqualTo("1.1");
     assertThat(schema.entityName).isEqualTo("Order");
     assertThat(schema.description).isEqualTo("Basic order management system");
     assertThat(schema.primaryKey).isNotNull();
@@ -60,7 +60,7 @@ public class BprintLoaderTest {
     BprintSchema schema = BprintLoader.load(bprintFile);
 
     assertThat(schema).isNotNull();
-    assertThat(schema.schemaVersion).isEqualTo(1.1);
+    assertThat(schema.schemaVersion).isEqualTo("1.1");
   }
 
   @Test
@@ -71,14 +71,14 @@ public class BprintLoaderTest {
     BprintSchema schema = BprintLoader.load(jsonFile);
 
     assertThat(schema).isNotNull();
-    assertThat(schema.schemaVersion).isEqualTo(1.1);
+    assertThat(schema.schemaVersion).isEqualTo("1.1");
   }
 
   @Test
   void shouldRejectInvalidJson() throws IOException {
     String invalidJson = """
       {
-        "schemaVersion": 1.1,
+        "schemaVersion": "1.1",
         "entityName": "Order",
         "description": "Basic order management system",
         "primaryKey": { "partitionKey": "orderId" },
@@ -98,7 +98,7 @@ public class BprintLoaderTest {
   void shouldRejectSchemaWithMissingRequiredFields() throws IOException {
     String incompleteJson = """
       {
-        "schemaVersion": 1.1,
+        "schemaVersion": "1.1",
         "entityName": "Order"
       }
       """;
@@ -115,7 +115,7 @@ public class BprintLoaderTest {
   void shouldRejectSchemaWithInvalidEntity() throws IOException {
     String invalidEntityJson = """
       {
-        "schemaVersion": 1.1,
+        "schemaVersion": "1.1",
         "entityName": "Order",
         "description": "Basic order management system",
         "fields": [
@@ -136,7 +136,7 @@ public class BprintLoaderTest {
   void shouldHandleComplexSchemaWithAllFeatures() throws IOException {
     String complexJson = """
       {
-        "schemaVersion": 1.1,
+        "schemaVersion": "1.1",
         "entityName": "Customer",
         "description": "Customer account information and profile data",
         "primaryKey": {
@@ -169,7 +169,7 @@ public class BprintLoaderTest {
     BprintSchema schema = BprintLoader.load(jsonFile);
 
     assertThat(schema).isNotNull();
-    assertThat(schema.schemaVersion).isEqualTo(1.1);
+    assertThat(schema.schemaVersion).isEqualTo("1.1");
     assertThat(schema.entityName).isEqualTo("Customer");
     assertThat(schema.description).isEqualTo("Customer account information and profile data");
     assertThat(schema.primaryKey).isNotNull();
@@ -204,7 +204,7 @@ public class BprintLoaderTest {
   void shouldHandleMalformedJsonWithExtraCommas() throws IOException {
     String malformedJson = """
       {
-        "schemaVersion": 1.1,
+        "schemaVersion": "1.1",
         "entityName": "Order",
         "description": "Basic order management system",
         "primaryKey": { "partitionKey": "orderId" },

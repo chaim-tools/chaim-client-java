@@ -7,7 +7,7 @@ import java.util.Objects;
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 public class BprintSchema {
-  public Double schemaVersion;
+  public String schemaVersion;
   public String entityName;
   public String description;
   public PrimaryKey primaryKey;
@@ -67,13 +67,17 @@ public class BprintSchema {
   }
 
   /**
-   * Simplified field definition for nested map structures.
-   * Only name and scalar type - no constraints or annotations.
+   * Field definition for nested map structures.
+   * Supports recursive nesting: nested fields can themselves be maps or lists.
    */
   @JsonIgnoreProperties(ignoreUnknown = true)
   public static class NestedField {
     public String name;
     public String type;
+    /** Element type definition (when type is 'list') */
+    public ListItems items;
+    /** Nested field definitions (when type is 'map') */
+    public List<NestedField> fields;
   }
 
   /**

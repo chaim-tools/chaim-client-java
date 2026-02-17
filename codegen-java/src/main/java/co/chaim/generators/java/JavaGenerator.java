@@ -291,29 +291,29 @@ public class JavaGenerator {
             .addAnnotation(LOMBOK_ALL_ARGS_CONSTRUCTOR)
             .addAnnotation(DYNAMO_DB_BEAN);
 
-        // Add all fields from schema using resolved code names
+        // Resolve code names and types for all fields in one pass to avoid
+        // calling mapFieldType twice (which would duplicate inner classes).
+        record ResolvedField(BprintSchema.Field field, String codeName, TypeName type) {}
+        List<ResolvedField> resolvedFields = new ArrayList<>();
         for (BprintSchema.Field field : schema.fields) {
             String codeName = resolveCodeName(field);
             TypeName type = mapFieldType(field, entityClass, innerClasses);
+            resolvedFields.add(new ResolvedField(field, codeName, type));
+        }
 
-            FieldSpec.Builder fieldBuilder = FieldSpec.builder(type, codeName, Modifier.PRIVATE);
+        // Add all fields from schema using resolved code names
+        for (ResolvedField rf : resolvedFields) {
+            FieldSpec.Builder fieldBuilder = FieldSpec.builder(rf.type, rf.codeName, Modifier.PRIVATE);
 
             // Add field description as Javadoc
-            if (field.description != null && !field.description.isEmpty()) {
-                fieldBuilder.addJavadoc("$L\n", field.description);
-            }
-
-            // Add @DynamoDbAttribute on non-key fields where code name differs from DynamoDB name
-            boolean isPk = field.name.equals(pkFieldName);
-            boolean isSk = hasSortKey && field.name.equals(skFieldName);
-            if (!isPk && !isSk && needsAttributeAnnotation(field, codeName)) {
-                fieldBuilder.addAnnotation(dynamoDbAttributeAnnotation(field.name));
+            if (rf.field.description != null && !rf.field.description.isEmpty()) {
+                fieldBuilder.addJavadoc("$L\n", rf.field.description);
             }
 
             // Add @Builder.Default with initializer for fields with default values
-            if (field.defaultValue != null) {
+            if (rf.field.defaultValue != null) {
                 fieldBuilder.addAnnotation(LOMBOK_BUILDER_DEFAULT);
-                fieldBuilder.initializer(formatDefaultInitializer(field.type, field.defaultValue));
+                fieldBuilder.initializer(formatDefaultInitializer(rf.field.type, rf.field.defaultValue));
             }
 
             tb.addField(fieldBuilder.build());
@@ -321,7 +321,10 @@ public class JavaGenerator {
 
         // Generate explicit getter for partition key with @DynamoDbPartitionKey
         String pkGetterName = "get" + cap(pkCodeName);
-        TypeName pkType = findFieldType(schema, pkFieldName, entityClass);
+        TypeName pkType = resolvedFields.stream()
+            .filter(rf -> rf.field.name.equals(pkFieldName))
+            .map(rf -> rf.type)
+            .findFirst().orElse(ClassName.get(String.class));
         MethodSpec.Builder pkGetter = MethodSpec.methodBuilder(pkGetterName)
             .addModifiers(Modifier.PUBLIC)
             .addAnnotation(DYNAMO_DB_PARTITION_KEY)
@@ -337,7 +340,10 @@ public class JavaGenerator {
         // Generate explicit getter for sort key with @DynamoDbSortKey (if defined)
         if (hasSortKey) {
             String skGetterName = "get" + cap(skCodeName);
-            TypeName skType = findFieldType(schema, skFieldName, entityClass);
+            TypeName skType = resolvedFields.stream()
+                .filter(rf -> rf.field.name.equals(skFieldName))
+                .map(rf -> rf.type)
+                .findFirst().orElse(ClassName.get(String.class));
             MethodSpec.Builder skGetter = MethodSpec.methodBuilder(skGetterName)
                 .addModifiers(Modifier.PUBLIC)
                 .addAnnotation(DYNAMO_DB_SORT_KEY)
@@ -350,6 +356,25 @@ public class JavaGenerator {
             tb.addMethod(skGetter.build());
         }
 
+        // Generate explicit getters with @DynamoDbAttribute for non-key fields
+        // whose code name differs from the DynamoDB attribute name.
+        // @DynamoDbAttribute has @Target(ElementType.METHOD) — it must be on a
+        // getter method, not a field. Lombok @Data skips generating a getter
+        // when an explicit one already exists, so there is no conflict.
+        for (ResolvedField rf : resolvedFields) {
+            boolean isPk = rf.field.name.equals(pkFieldName);
+            boolean isSk = hasSortKey && rf.field.name.equals(skFieldName);
+            if (!isPk && !isSk && needsAttributeAnnotation(rf.field, rf.codeName)) {
+                String getterName = "get" + cap(rf.codeName);
+                tb.addMethod(MethodSpec.methodBuilder(getterName)
+                    .addModifiers(Modifier.PUBLIC)
+                    .addAnnotation(dynamoDbAttributeAnnotation(rf.field.name))
+                    .returns(rf.type)
+                    .addStatement("return $L", rf.codeName)
+                    .build());
+            }
+        }
+
         // Add inner classes for collection types (list-of-map, standalone map)
         for (TypeSpec inner : innerClasses) {
             tb.addType(inner);
@@ -359,18 +384,6 @@ public class JavaGenerator {
             .skipJavaLangImports(true)
             .build()
             .writeTo(outDir);
-    }
-
-    /**
-     * Find the type of a field by name in the schema.
-     */
-    private TypeName findFieldType(BprintSchema schema, String fieldName, ClassName entityClass) {
-        for (BprintSchema.Field field : schema.fields) {
-            if (field.name.equals(fieldName)) {
-                return mapFieldType(field, entityClass, new ArrayList<>());
-            }
-        }
-        return ClassName.get(String.class);
     }
 
     // =========================================================================
@@ -586,10 +599,10 @@ public class JavaGenerator {
             }
         }
 
-        // Generate query methods for LSIs
+        // Generate query methods for LSIs (LSIs share the table's partition key)
         if (tableMetadata.localSecondaryIndexes() != null) {
             for (TableMetadata.LSIMetadata lsi : tableMetadata.localSecondaryIndexes()) {
-                addIndexQueryMethods(tb, lsi.indexName(), lsi.partitionKey(), lsi.sortKey(),
+                addIndexQueryMethods(tb, lsi.indexName(), pkFieldName, lsi.sortKey(),
                     entityClass, listOfEntity);
             }
         }
@@ -1229,6 +1242,7 @@ public class JavaGenerator {
     /**
      * Build an inner static @DynamoDbBean class for nested map structures.
      * Uses Lombok @Data and @NoArgsConstructor for getters/setters/constructors.
+     * Supports recursive nesting: nested map/list fields generate further inner classes.
      */
     private TypeSpec buildNestedBeanClass(String className, List<BprintSchema.NestedField> nestedFields) {
         TypeSpec.Builder tb = TypeSpec.classBuilder(className)
@@ -1239,8 +1253,30 @@ public class JavaGenerator {
             .addAnnotation(DYNAMO_DB_BEAN);
 
         for (BprintSchema.NestedField nf : nestedFields) {
-            ClassName type = mapScalarType(nf.type);
-            tb.addField(FieldSpec.builder(type, nf.name, Modifier.PRIVATE).build());
+            TypeName fieldType;
+
+            if ("map".equals(nf.type) && nf.fields != null && !nf.fields.isEmpty()) {
+                String innerClassName = cap(nf.name);
+                TypeSpec innerClass = buildNestedBeanClass(innerClassName, nf.fields);
+                tb.addType(innerClass);
+                fieldType = ClassName.bestGuess(innerClassName);
+            } else if ("list".equals(nf.type) && nf.items != null) {
+                if ("map".equals(nf.items.type) && nf.items.fields != null && !nf.items.fields.isEmpty()) {
+                    String innerClassName = cap(nf.name) + "Item";
+                    TypeSpec innerClass = buildNestedBeanClass(innerClassName, nf.items.fields);
+                    tb.addType(innerClass);
+                    fieldType = ParameterizedTypeName.get(
+                        ClassName.get("java.util", "List"), ClassName.bestGuess(innerClassName));
+                } else {
+                    ClassName elementType = nf.items != null ? mapScalarType(nf.items.type) : ClassName.get(Object.class);
+                    fieldType = ParameterizedTypeName.get(
+                        ClassName.get("java.util", "List"), elementType);
+                }
+            } else {
+                fieldType = mapScalarType(nf.type);
+            }
+
+            tb.addField(FieldSpec.builder(fieldType, nf.name, Modifier.PRIVATE).build());
         }
 
         return tb.build();

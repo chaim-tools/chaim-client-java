@@ -29,7 +29,7 @@ public class JavaGeneratorTest {
 
     // Create User schema (partition key only)
     userSchema = new BprintSchema();
-    userSchema.schemaVersion = 1.1;
+    userSchema.schemaVersion = "1.1";
     userSchema.entityName = "User";
     userSchema.description = "User entity";
 
@@ -51,7 +51,7 @@ public class JavaGeneratorTest {
 
     // Create User schema with sort key (for composite key tests)
     userWithSortKeySchema = new BprintSchema();
-    userWithSortKeySchema.schemaVersion = 1.1;
+    userWithSortKeySchema.schemaVersion = "1.1";
     userWithSortKeySchema.entityName = "User";
     userWithSortKeySchema.description = "User entity with sort key";
 
@@ -79,7 +79,7 @@ public class JavaGeneratorTest {
 
     // Create Order schema (same keys as userWithSortKeySchema for multi-entity tests)
     orderSchema = new BprintSchema();
-    orderSchema.schemaVersion = 1.1;
+    orderSchema.schemaVersion = "1.1";
     orderSchema.entityName = "Order";
     orderSchema.description = "Order entity";
 
@@ -377,7 +377,7 @@ public class JavaGeneratorTest {
   void derivesEntityNameFromNamespace() throws Exception {
     // Create schema without explicit entityName - should default to "Entity"
     BprintSchema schemaWithoutName = new BprintSchema();
-    schemaWithoutName.schemaVersion = 1.1;
+    schemaWithoutName.schemaVersion = "1.1";
     schemaWithoutName.entityName = null;  // Not set
     schemaWithoutName.description = "Products";
 
@@ -409,7 +409,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithHyphenatedFieldNames() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Order entity with hyphenated fields";
 
@@ -451,9 +451,16 @@ public class JavaGeneratorTest {
     assertThat(content).doesNotContain("private String order-id");
     assertThat(content).doesNotContain("private Instant order-date");
 
-    // Auto-converted fields need @DynamoDbAttribute annotation
+    // @DynamoDbAttribute must be on getter methods, NOT on field declarations.
+    // (The annotation has @Target(ElementType.METHOD) in AWS SDK v2.)
     assertThat(content).contains("@DynamoDbAttribute(\"order-id\")");
     assertThat(content).contains("@DynamoDbAttribute(\"order-date\")");
+
+    // Non-key auto-converted field should have an explicit getter with @DynamoDbAttribute
+    assertThat(content).contains("@DynamoDbAttribute(\"order-date\")\n  public Instant getOrderDate()");
+
+    // Field declaration should NOT have @DynamoDbAttribute
+    assertThat(content).doesNotContain("@DynamoDbAttribute(\"order-date\")\n  private");
 
     // Clean field should NOT have @DynamoDbAttribute
     // customerId maps to customerId - no annotation needed
@@ -467,7 +474,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithNameOverride() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Order with nameOverride";
 
@@ -496,8 +503,11 @@ public class JavaGeneratorTest {
     // nameOverride should be used as the Java field name
     assertThat(content).contains("private Boolean twoFactorVerified");
 
-    // @DynamoDbAttribute should map back to the original DynamoDB name
-    assertThat(content).contains("@DynamoDbAttribute(\"2fa-verified\")");
+    // @DynamoDbAttribute should be on the getter method, not the field
+    assertThat(content).contains("@DynamoDbAttribute(\"2fa-verified\")\n  public Boolean getTwoFactorVerified()");
+
+    // Field declaration must NOT have @DynamoDbAttribute
+    assertThat(content).doesNotContain("@DynamoDbAttribute(\"2fa-verified\")\n  private");
 
     // Clean field should NOT have @DynamoDbAttribute
     assertThat(content).doesNotContain("@DynamoDbAttribute(\"orderId\")");
@@ -507,7 +517,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithCleanName_noAnnotation() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Customer";
     schema.description = "Clean field names";
 
@@ -563,7 +573,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithMixedFieldNames() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Mixed field names";
 
@@ -660,7 +670,7 @@ public class JavaGeneratorTest {
   @Test
   void keysHelperPreservesOriginalDynamoDbAttributeNames() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Order with hyphenated PK";
 
@@ -690,7 +700,7 @@ public class JavaGeneratorTest {
   @Test
   void repositoryUsesResolvedCodeNamesForParameters() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Order with hyphenated PK";
 
@@ -752,7 +762,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesValidatorWithStringConstraints() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Customer";
     schema.description = "Customer with string constraints";
 
@@ -819,7 +829,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesValidatorWithNumberConstraints() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Product";
     schema.description = "Product with number constraints";
 
@@ -877,7 +887,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesValidatorWithMixedConstraints() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "User";
     schema.description = "User with mixed constraints";
 
@@ -938,7 +948,7 @@ public class JavaGeneratorTest {
   void generatesValidatorWithNoValidation() throws Exception {
     // Schema where fields are NOT required, have no constraints, and no enum
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Simple";
     schema.description = "Simple entity with no validation rules";
 
@@ -977,7 +987,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesValidatorWithPartialConstraints() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Account";
     schema.description = "Account with partial constraints";
 
@@ -1043,7 +1053,7 @@ public class JavaGeneratorTest {
   @Test
   void validatorUsesOriginalFieldNameInErrors() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Order with nameOverride and constraints";
 
@@ -1086,7 +1096,7 @@ public class JavaGeneratorTest {
   @Test
   void validatorHandlesPatternWithSpecialChars() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Contact";
     schema.description = "Contact with complex pattern";
 
@@ -1135,7 +1145,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesValidatorWithRequiredFields() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Customer";
     schema.description = "Customer with required fields";
 
@@ -1182,7 +1192,7 @@ public class JavaGeneratorTest {
   @Test
   void validatorAllowsNullOptionalField() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Profile";
     schema.description = "Profile with optional fields";
 
@@ -1224,7 +1234,7 @@ public class JavaGeneratorTest {
   @Test
   void validatorRequiredCheckComesBeforeConstraintChecks() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Account";
     schema.description = "Account with required + constraints";
 
@@ -1267,7 +1277,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithStringDefault() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Settings";
     schema.description = "Settings with string default";
 
@@ -1309,7 +1319,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithBooleanDefault() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Feature";
     schema.description = "Feature with boolean default";
 
@@ -1346,7 +1356,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithNumberDefault() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Pricing";
     schema.description = "Pricing with number default";
 
@@ -1383,7 +1393,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithMixedDefaults() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Config";
     schema.description = "Config with mixed defaults";
 
@@ -1438,7 +1448,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesValidatorWithEnumValues() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Product";
     schema.description = "Product with enum values";
 
@@ -1478,7 +1488,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesValidatorWithEnumAndConstraints() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Item";
     schema.description = "Item with both enum and constraints";
 
@@ -1533,7 +1543,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithDescription() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Customer";
     schema.description = "Customer entity";
 
@@ -1575,7 +1585,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithoutDescription() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Minimal";
     schema.description = "Minimal entity";
 
@@ -1613,7 +1623,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithListOfStrings() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Order with tags";
 
@@ -1647,7 +1657,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithListOfNumbers() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Score";
     schema.description = "Score with values";
 
@@ -1679,7 +1689,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithListOfMaps() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Order with line items";
 
@@ -1734,7 +1744,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithStandaloneMap() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Config";
     schema.description = "Config with metadata map";
 
@@ -1774,7 +1784,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithStringSet() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "User";
     schema.description = "User with roles";
 
@@ -1804,7 +1814,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithNumberSet() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Score";
     schema.description = "Score with tiers";
 
@@ -1833,7 +1843,7 @@ public class JavaGeneratorTest {
   @Test
   void validatorSkipsConstraintsOnCollectionTypes() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Order with required collection";
 
@@ -1880,7 +1890,7 @@ public class JavaGeneratorTest {
   @Test
   void generatesEntityWithAllCollectionTypes() throws Exception {
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Order with all collection types";
 
@@ -1967,7 +1977,7 @@ public class JavaGeneratorTest {
     );
 
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Order entity";
 
@@ -2010,7 +2020,7 @@ public class JavaGeneratorTest {
     );
 
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Order entity";
 
@@ -2051,7 +2061,7 @@ public class JavaGeneratorTest {
     );
 
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Order entity";
 
@@ -2083,11 +2093,11 @@ public class JavaGeneratorTest {
         "arn:aws:dynamodb:us-east-1:123:table/OrdersTable",
         "us-east-1",
         null,
-        List.of(new TableMetadata.LSIMetadata("amount-index", "orderId", "amount", "ALL"))
+        List.of(new TableMetadata.LSIMetadata("amount-index", "amount", "ALL"))
     );
 
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Order entity";
 
@@ -2106,7 +2116,7 @@ public class JavaGeneratorTest {
 
     String repoContent = Files.readString(out.resolve("com/example/model/repository/OrderRepository.java"));
 
-    // LSI query method
+    // LSI query method (LSI shares the table's partition key "orderId")
     assertThat(repoContent).contains("queryByAmountIndex(String orderId)");
     assertThat(repoContent).contains("queryByAmountIndex(String orderId, String amount)");
     assertThat(repoContent).contains("table.index(\"amount-index\")");
@@ -2122,11 +2132,11 @@ public class JavaGeneratorTest {
             new TableMetadata.GSIMetadata("customer-index", "customerId", null, "ALL"),
             new TableMetadata.GSIMetadata("status-date-index", "status", "createdAt", "ALL")
         ),
-        List.of(new TableMetadata.LSIMetadata("amount-index", "orderId", "amount", "ALL"))
+        List.of(new TableMetadata.LSIMetadata("amount-index", "amount", "ALL"))
     );
 
     BprintSchema schema = new BprintSchema();
-    schema.schemaVersion = 1.1;
+    schema.schemaVersion = "1.1";
     schema.entityName = "Order";
     schema.description = "Order entity";
 
@@ -2180,5 +2190,69 @@ public class JavaGeneratorTest {
     assertThat(JavaGenerator.toCamelCase("status-date-index")).isEqualTo("statusDateIndex");
     assertThat(JavaGenerator.toCamelCase("customerId")).isEqualTo("customerId");
     assertThat(JavaGenerator.toCamelCase("amount_index")).isEqualTo("amountIndex");
+  }
+
+  @Test
+  void generatesNestedInnerClassesForMapsWithinMaps() throws Exception {
+    BprintSchema schema = new BprintSchema();
+    schema.schemaVersion = "1.0";
+    schema.entityName = "Order";
+    schema.description = "Order with nested maps";
+
+    BprintSchema.PrimaryKey pk = new BprintSchema.PrimaryKey();
+    pk.partitionKey = "orderId";
+    schema.primaryKey = pk;
+
+    BprintSchema.Field orderIdField = new BprintSchema.Field();
+    orderIdField.name = "orderId";
+    orderIdField.type = "string";
+    orderIdField.required = true;
+
+    // Build nested map: shippingAddress > coordinates (map within map)
+    BprintSchema.NestedField streetField = new BprintSchema.NestedField();
+    streetField.name = "street";
+    streetField.type = "string";
+
+    BprintSchema.NestedField cityField = new BprintSchema.NestedField();
+    cityField.name = "city";
+    cityField.type = "string";
+
+    BprintSchema.NestedField latField = new BprintSchema.NestedField();
+    latField.name = "lat";
+    latField.type = "number";
+
+    BprintSchema.NestedField lngField = new BprintSchema.NestedField();
+    lngField.name = "lng";
+    lngField.type = "number";
+
+    BprintSchema.NestedField coordsField = new BprintSchema.NestedField();
+    coordsField.name = "coordinates";
+    coordsField.type = "map";
+    coordsField.fields = List.of(latField, lngField);
+
+    BprintSchema.Field shippingField = new BprintSchema.Field();
+    shippingField.name = "shippingAddress";
+    shippingField.type = "map";
+    shippingField.fields = List.of(streetField, cityField, coordsField);
+
+    schema.fields = List.of(orderIdField, shippingField);
+
+    Path out = tempDir.resolve("generated");
+    generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
+
+    String entityContent = Files.readString(out.resolve("com/example/model/Order.java"));
+
+    // Outer inner class for shippingAddress
+    assertThat(entityContent).contains("public static class ShippingAddress");
+    assertThat(entityContent).contains("private String street");
+    assertThat(entityContent).contains("private String city");
+
+    // Nested inner class for coordinates within ShippingAddress
+    assertThat(entityContent).contains("public static class Coordinates");
+    assertThat(entityContent).contains("private Double lat");
+    assertThat(entityContent).contains("private Double lng");
+
+    // The coordinates field should reference the inner Coordinates type
+    assertThat(entityContent).contains("private Coordinates coordinates");
   }
 }
