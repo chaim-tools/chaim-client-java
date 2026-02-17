@@ -35,8 +35,8 @@ public class Order {
     private String orderId;
     private String customerId;
     private Double totalAmount;
-    private List<OrderLineItemsItem> lineItems;
-    private OrderShippingAddress shippingAddress;
+    private List<LineItemsItem> lineItems;
+    private ShippingAddress shippingAddress;
     private Set<String> tags;
     private Instant createdAt;
 
@@ -48,19 +48,25 @@ public class Order {
 
     // Inner class for list-of-map field
     @Data @NoArgsConstructor @AllArgsConstructor @DynamoDbBean
-    public static class OrderLineItemsItem {
+    public static class LineItemsItem {
         private String productId;
         private Double quantity;
         private Double price;
     }
 
-    // Inner class for standalone map field
+    // Inner class for standalone map field (supports recursive nesting)
     @Data @NoArgsConstructor @AllArgsConstructor @DynamoDbBean
-    public static class OrderShippingAddress {
+    public static class ShippingAddress {
         private String street;
         private String city;
-        private String state;
-        private String zip;
+        private Coordinates coordinates;  // Map within map
+
+        // Nested inner class for map-within-map
+        @Data @NoArgsConstructor @AllArgsConstructor @DynamoDbBean
+        public static class Coordinates {
+            private Double lat;
+            private Double lng;
+        }
     }
 }
 ```
@@ -71,6 +77,7 @@ Key behaviors:
 - Fields with `default` values get `@Builder.Default` with an initializer
 - Fields with `description` get Javadoc
 - `list<map>` and standalone `map` fields generate inner `@DynamoDbBean` static classes
+- Recursive nesting is fully supported — maps within maps, lists of maps within maps, and lists within maps generate nested inner classes with no depth limit
 - `stringSet` maps to `Set<String>`, `numberSet` maps to `Set<Double>`
 
 ### Keys Helper
@@ -96,7 +103,7 @@ Generates `INDEX_` constants for each GSI and LSI defined on the table.
 
 ### Repository
 
-CRUD operations with automatic validation, plus typed query methods for each GSI/LSI:
+CRUD operations with automatic validation, plus typed query methods for each GSI and LSI:
 
 ```java
 public class OrderRepository {
@@ -107,13 +114,20 @@ public class OrderRepository {
     public Optional<Order> findByKey(String orderId, String customerId) { ... }
     public void deleteByKey(String orderId, String customerId) { ... }
 
-    // Generated per GSI/LSI
+    // Generated per GSI
     public List<Order> queryByCustomerIndex(String customerId) { ... }
+    public List<Order> queryByCustomerIndex(String customerId, String orderDate) { ... }
+
+    // Generated per LSI (uses the table's partition key automatically)
+    public List<Order> queryByAmountIndex(String orderId) { ... }
+    public List<Order> queryByAmountIndex(String orderId, String amount) { ... }
 }
 ```
 
 - `save()` calls the validator before persisting
 - `findByKey()` returns `Optional.empty()` when the item does not exist
+- GSI queries use the GSI's own partition key; LSI queries use the table's partition key (LSIs always share it)
+- Each index generates a PK-only method and a PK+SK overloaded method (when the index has a sort key)
 - No `scan()` or `findAll()` — promotes DynamoDB best practices
 
 ### Validator
@@ -142,17 +156,19 @@ Throws `ChaimValidationException` with a list of `FieldError` objects for all vi
 
 ## Type Mappings
 
-| .bprint Type | Java Type |
-|--------------|-----------|
-| `string` | `String` |
-| `number` | `Double` |
-| `boolean` | `Boolean` |
-| `timestamp` | `Instant` |
-| `list` (scalar) | `List<String>`, `List<Double>`, etc. |
-| `list` (map) | `List<{FieldName}Item>` |
-| `map` | `{FieldName}` (inner class) |
-| `stringSet` | `Set<String>` |
-| `numberSet` | `Set<Double>` |
+| .bprint Type | Java Type | Notes |
+|--------------|-----------|-------|
+| `string` | `String` | |
+| `number` | `Double` | |
+| `boolean` | `Boolean` | |
+| `timestamp` | `Instant` | `java.time.Instant` |
+| `list` (scalar) | `List<String>`, `List<Double>`, etc. | Parameterized by `items.type` |
+| `list` (map) | `List<{FieldName}Item>` | Inner `@DynamoDbBean` class |
+| `map` | `{FieldName}` (inner class) | Inner `@DynamoDbBean` class; supports recursive nesting |
+| `stringSet` | `Set<String>` | |
+| `numberSet` | `Set<Double>` | |
+
+Recursive nesting is fully supported. A `map` field can contain nested `map` or `list` fields, which generate further inner static classes. There is no hardcoded depth limit — the database itself is the guardrail.
 
 ## Name Resolution
 
@@ -174,7 +190,7 @@ chaim-client-java/
 ├── codegen-java/                   # Code generation engine
 │   └── src/main/java/co/chaim/generators/java/
 │       ├── JavaGenerator.java      # JavaPoet-based generator
-│       ├── TableMetadata.java      # Table + GSI/LSI metadata record
+│       ├── TableMetadata.java      # Table + GSI/LSI metadata (matches CDK snapshot shape)
 │       └── Main.java               # CLI entry point
 ├── src/
 │   └── index.ts                    # TypeScript wrapper (spawns Java process)
@@ -234,6 +250,16 @@ When multiple entities share a DynamoDB table (single-table design), the generat
 - `ChaimConfig` includes repository factory methods for every entity on the table
 
 The CLI validates that all entities bound to the same table have matching partition/sort key field names before invoking the generator.
+
+## CDK Snapshot Alignment
+
+The `TableMetadata` record in this package mirrors the CDK snapshot shape produced by `chaim-cdk`. Key design decisions:
+
+- **GSI metadata** includes `indexName`, `partitionKey`, `sortKey`, and `projectionType` — GSIs define their own key schema
+- **LSI metadata** includes `indexName`, `sortKey`, and `projectionType` only — LSIs always share the table's partition key, so no `partitionKey` field is needed. The generator uses the table's partition key (from the `.bprint` schema) when generating LSI query methods
+- **`@JsonIgnoreProperties(ignoreUnknown = true)`** on all metadata records ensures forward compatibility when the CDK snapshot adds new fields
+
+This alignment means the CLI can pass the snapshot's `resource` section directly to the Java generator without transformation.
 
 ## License
 

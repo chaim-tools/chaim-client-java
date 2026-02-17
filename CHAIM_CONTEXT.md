@@ -13,9 +13,9 @@
 A hybrid Java/TypeScript package that generates production-ready Java source files from `.bprint` schemas and DynamoDB table metadata. It is an internal dependency of `chaim-cli` — end users invoke the CLI, which delegates to this generator.
 
 The generator uses JavaPoet to emit:
-- Entity DTOs with DynamoDB Enhanced Client annotations and Lombok
+- Entity DTOs with DynamoDB Enhanced Client annotations, Lombok, and recursively nested inner classes for map/list-of-map fields
 - Key helpers with constants and factory methods
-- Repositories with CRUD operations and GSI/LSI query methods
+- Repositories with CRUD operations and GSI/LSI query methods (LSI queries use the table's partition key automatically)
 - Validators with constraint enforcement
 - A DI-friendly DynamoDB client wrapper
 - A configuration class with table constants and repository factories
@@ -27,8 +27,8 @@ The generator uses JavaPoet to emit:
 | Package | Relationship |
 |---------|-------------|
 | `@chaim-tools/chaim` (chaim-cli) | Consumer — invokes `JavaGenerator` via TypeScript wrapper |
-| `@chaim-tools/chaim-bprint-spec` | Schema format — Java model (`BprintSchema.java`) mirrors TypeScript types |
-| `@chaim-tools/cdk-lib` (chaim-cdk) | Upstream — produces snapshots with schema + table metadata |
+| `@chaim-tools/chaim-bprint-spec` | Schema format — Java model (`BprintSchema.java`) mirrors TypeScript types including recursive `NestedField` support |
+| `@chaim-tools/cdk-lib` (chaim-cdk) | Upstream — produces snapshots with schema + table metadata; `TableMetadata` records align with CDK's snapshot shape (GSI/LSI metadata) |
 
 **Invocation path**: `chaim generate` → CLI discovers snapshots → CLI calls `JavaGenerator.generateForTable()` → TypeScript wrapper spawns Java process → Java generator writes `.java` files
 
@@ -115,9 +115,12 @@ public class BprintSchema {
         public List<NestedField> fields;
     }
 
+    // Supports recursive nesting: map within map, list within map
     public static class NestedField {
         public String name;
-        public String type;
+        public String type;           // string, number, boolean, timestamp, map, list
+        public ListItems items;       // For nested list fields
+        public List<NestedField> fields;  // For nested map fields (self-referencing)
     }
 }
 ```
@@ -174,7 +177,7 @@ public record TableMetadata(
 | `mapScalarType(type)` | Maps scalar type string to Java ClassName |
 | `mapListType(field, entityClass, innerClasses)` | Handles list fields; generates inner class for list<map> |
 | `mapMapType(field, entityClass, innerClasses)` | Handles standalone map fields; generates inner class |
-| `buildNestedBeanClass(className, nestedFields)` | Builds inner `@DynamoDbBean` class from nested field definitions |
+| `buildNestedBeanClass(className, nestedFields)` | Recursively builds inner `@DynamoDbBean` classes; supports map-within-map and list-of-map-within-map with no depth limit |
 
 ### Name Resolution
 
@@ -190,7 +193,9 @@ public record TableMetadata(
 
 | Method | Description |
 |--------|-------------|
-| `addIndexQueryMethods(tb, indexName, pk, sk, entityClass, listOfEntity)` | Adds `queryBy{IndexName}()` methods for a single GSI/LSI |
+| `addIndexQueryMethods(tb, indexName, pk, sk, entityClass, listOfEntity)` | Adds `queryBy{IndexName}()` methods (PK-only and PK+SK overload) for a single GSI or LSI |
+
+For GSIs, the generator passes the GSI's own `partitionKey` from `GSIMetadata`. For LSIs, it passes the table's partition key from the schema (`pkFieldName`) because LSIs always share the table's partition key. This matches the CDK snapshot shape where `LSIMetadata` has no `partitionKey` field.
 
 ### Utility
 
@@ -248,8 +253,8 @@ public class Order {
     private String orderId;
     private String customerId;
     private Double totalAmount;
-    private List<OrderLineItemsItem> lineItems;
-    private OrderShippingAddress shippingAddress;
+    private List<LineItemsItem> lineItems;
+    private ShippingAddress shippingAddress;
     private Set<String> tags;
 
     @DynamoDbPartitionKey
@@ -260,11 +265,21 @@ public class Order {
 
     // Inner class for list<map>
     @Data @NoArgsConstructor @AllArgsConstructor @DynamoDbBean
-    public static class OrderLineItemsItem { ... }
+    public static class LineItemsItem { ... }
 
-    // Inner class for standalone map
+    // Inner class for standalone map (supports recursive nesting)
     @Data @NoArgsConstructor @AllArgsConstructor @DynamoDbBean
-    public static class OrderShippingAddress { ... }
+    public static class ShippingAddress {
+        private String street;
+        private String city;
+        private Coordinates coordinates;  // Map within map
+
+        @Data @NoArgsConstructor @AllArgsConstructor @DynamoDbBean
+        public static class Coordinates {
+            private Double lat;
+            private Double lng;
+        }
+    }
 }
 ```
 
@@ -292,15 +307,13 @@ public class OrderRepository {
         table.deleteItem(key);
     }
 
-    // Generated per GSI
-    public List<Order> queryByCustomerIndex(String customerId) {
-        DynamoDbIndex<Order> index = table.index("customer-index");
-        QueryConditional condition = QueryConditional.keyEqualTo(
-            Key.builder().partitionValue(customerId).build());
-        List<Order> results = new ArrayList<>();
-        index.query(condition).forEach(page -> results.addAll(page.items()));
-        return results;
-    }
+    // Generated per GSI (uses GSI's own partition key)
+    public List<Order> queryByCustomerIndex(String customerId) { ... }
+    public List<Order> queryByCustomerDateIndex(String customerId, String orderDate) { ... }
+
+    // Generated per LSI (uses table's partition key — LSIs always share it)
+    public List<Order> queryByAmountIndex(String orderId) { ... }
+    public List<Order> queryByAmountIndex(String orderId, String amount) { ... }
 }
 ```
 
@@ -362,7 +375,8 @@ public final class OrderKeys {
 | Delete | `deleteByKey(pk)` / `deleteByKey(pk, sk)` | Removes item |
 | GSI Query | `queryBy{IndexName}(pk)` | Query by GSI partition key |
 | GSI Query (with SK) | `queryBy{IndexName}(pk, sk)` | Query by GSI PK + SK |
-| LSI Query | `queryBy{IndexName}(pk)` | Query by LSI partition key |
+| LSI Query | `queryBy{IndexName}(pk)` | Query by table partition key (LSIs share it) |
+| LSI Query (with SK) | `queryBy{IndexName}(pk, sk)` | Query by table PK + LSI sort key |
 
 ### Backlog Operations
 
@@ -464,6 +478,14 @@ The generator uses exactly the PK/SK field names from the `.bprint` schema. It d
 ### Inner Classes for Nested Types
 
 `list<map>` and standalone `map` fields generate inner static classes annotated with `@DynamoDbBean`. Inner class naming: `{FieldName}Item` for list-of-map, `{FieldName}` (capitalized) for standalone map. Each inner class gets `@Data`, `@NoArgsConstructor`, `@AllArgsConstructor` from Lombok.
+
+Recursive nesting is fully supported. A nested `map` field generates a further inner class within the parent inner class, and a nested `list` of maps generates a further `{FieldName}Item` inner class. This mirrors the `.bprint` spec where `NestedField` is self-referencing. There is no hardcoded depth limit — the database itself is the guardrail.
+
+### LSI Metadata Shape (CDK Alignment)
+
+`TableMetadata.LSIMetadata` contains only `indexName`, `sortKey`, and `projectionType` — no `partitionKey`. This matches the CDK snapshot shape (`chaim-cdk`'s `LSIMetadata`), because LSIs always share the table's partition key. The generator uses the table's own partition key (from `schema.primaryKey.partitionKey`) when generating LSI query methods.
+
+`TableMetadata.GSIMetadata` retains `partitionKey` because GSIs define their own independent key schema.
 
 ---
 
