@@ -1470,19 +1470,22 @@ public class JavaGeneratorTest {
     Path out = tempDir.resolve("generated");
     generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
 
-    String content = Files.readString(out.resolve("com/example/model/validation/ProductValidator.java"));
+    // A standalone enum file should be generated for the category field
+    String enumContent = Files.readString(out.resolve("com/example/model/ProductCategory.java"));
+    assertThat(enumContent).contains("public enum ProductCategory");
+    assertThat(enumContent).contains("electronics");
+    assertThat(enumContent).contains("clothing");
+    assertThat(enumContent).contains("books");
 
-    // Enum check should use Set.of with allowed values
-    assertThat(content).contains("Set.of(\"electronics\", \"clothing\", \"books\")");
-    assertThat(content).contains(".contains(entity.getCategory())");
+    // The entity field should use the enum type, not String
+    String entityContent = Files.readString(out.resolve("com/example/model/Product.java"));
+    assertThat(entityContent).contains("ProductCategory category");
 
-    // Error should reference original field name and "enum" constraint
-    assertThat(content).contains("\"category\"");
-    assertThat(content).contains("\"enum\"");
-    assertThat(content).contains("must be one of [electronics, clothing, books]");
-
-    // Null-safe
-    assertThat(content).contains("entity.getCategory() != null");
+    // The validator should NOT contain a string-based Set.of enum check — the enum
+    // type enforces valid values at compile/serialization time
+    String validatorContent = Files.readString(out.resolve("com/example/model/validation/ProductValidator.java"));
+    assertThat(validatorContent).doesNotContain("Set.of(");
+    assertThat(validatorContent).doesNotContain("must be one of");
   }
 
   @Test
@@ -1515,25 +1518,27 @@ public class JavaGeneratorTest {
     Path out = tempDir.resolve("generated");
     generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
 
-    String content = Files.readString(out.resolve("com/example/model/validation/ItemValidator.java"));
+    // A standalone enum file should be generated
+    String enumContent = Files.readString(out.resolve("com/example/model/ItemStatus.java"));
+    assertThat(enumContent).contains("public enum ItemStatus");
+    assertThat(enumContent).contains("active");
+    assertThat(enumContent).contains("inactive");
+    assertThat(enumContent).contains("archived");
 
-    // Required check
-    assertThat(content).contains("entity.getStatus() == null");
-    assertThat(content).contains("\"required\"");
+    // The entity should use the enum type
+    String entityContent = Files.readString(out.resolve("com/example/model/Item.java"));
+    assertThat(entityContent).contains("ItemStatus status");
 
-    // Constraint checks
-    assertThat(content).contains("entity.getStatus().length() < 1");
-    assertThat(content).contains("entity.getStatus().length() > 20");
+    String validatorContent = Files.readString(out.resolve("com/example/model/validation/ItemValidator.java"));
 
-    // Enum check
-    assertThat(content).contains("Set.of(\"active\", \"inactive\", \"archived\")");
+    // Required null-check is still emitted (null is always invalid for required fields)
+    assertThat(validatorContent).contains("entity.getStatus() == null");
+    assertThat(validatorContent).contains("\"required\"");
 
-    // Required comes before constraint, constraint before enum
-    int requiredIdx = content.indexOf("entity.getStatus() == null");
-    int constraintIdx = content.indexOf("entity.getStatus().length()");
-    int enumIdx = content.indexOf("Set.of(");
-    assertThat(requiredIdx).isLessThan(constraintIdx);
-    assertThat(constraintIdx).isLessThan(enumIdx);
+    // String constraints and Set-based enum checks are NOT emitted — the enum type
+    // makes them redundant (type system + DynamoDB Enhanced Client enforce valid values)
+    assertThat(validatorContent).doesNotContain("entity.getStatus().length()");
+    assertThat(validatorContent).doesNotContain("Set.of(");
   }
 
   // =========================================================================
@@ -1724,21 +1729,22 @@ public class JavaGeneratorTest {
     Path out = tempDir.resolve("generated");
     generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
 
-    String content = Files.readString(out.resolve("com/example/model/Order.java"));
+    String entityContent = Files.readString(out.resolve("com/example/model/Order.java"));
 
-    // Should generate List<LineItemsItem> field
-    assertThat(content).contains("private List<LineItemsItem> lineItems");
+    // Entity references the model class type (import added by JavaPoet)
+    assertThat(entityContent).contains("private List<LineItemsItem> lineItems");
 
-    // Should generate inner @DynamoDbBean class
-    assertThat(content).contains("public static class LineItemsItem");
-    assertThat(content).contains("private String productId");
-    assertThat(content).contains("private Double quantity");
-    assertThat(content).contains("private Double price");
+    // LineItemsItem is now a standalone class in the model sub-package
+    String modelContent = Files.readString(out.resolve("com/example/model/model/LineItemsItem.java"));
+    assertThat(modelContent).contains("public class LineItemsItem");
+    assertThat(modelContent).contains("private String productId");
+    assertThat(modelContent).contains("private Double quantity");
+    assertThat(modelContent).contains("private Double price");
 
-    // Inner class should have DynamoDB and Lombok annotations
-    assertThat(content).contains("@DynamoDbBean");
-    assertThat(content).contains("@NoArgsConstructor");
-    assertThat(content).contains("@AllArgsConstructor");
+    // Model class should have DynamoDB and Lombok annotations
+    assertThat(modelContent).contains("@DynamoDbBean");
+    assertThat(modelContent).contains("@NoArgsConstructor");
+    assertThat(modelContent).contains("@AllArgsConstructor");
   }
 
   @Test
@@ -1772,13 +1778,16 @@ public class JavaGeneratorTest {
     Path out = tempDir.resolve("generated");
     generator.generateForTable(List.of(schema), "com.example.model", out, tableMetadata);
 
-    String content = Files.readString(out.resolve("com/example/model/Config.java"));
+    String entityContent = Files.readString(out.resolve("com/example/model/Config.java"));
 
-    // Should generate Metadata inner class
-    assertThat(content).contains("private Metadata metadata");
-    assertThat(content).contains("public static class Metadata");
-    assertThat(content).contains("private String source");
-    assertThat(content).contains("private Double version");
+    // Entity references the Metadata model class
+    assertThat(entityContent).contains("private Metadata metadata");
+
+    // Metadata is now a standalone class in the model sub-package
+    String modelContent = Files.readString(out.resolve("com/example/model/model/Metadata.java"));
+    assertThat(modelContent).contains("public class Metadata");
+    assertThat(modelContent).contains("private String source");
+    assertThat(modelContent).contains("private Double version");
   }
 
   @Test
@@ -1950,16 +1959,16 @@ public class JavaGeneratorTest {
 
     String content = Files.readString(out.resolve("com/example/model/Order.java"));
 
-    // All collection types mapped correctly
+    // All collection types mapped correctly in the entity
     assertThat(content).contains("private List<String> tags");
     assertThat(content).contains("private List<LineItemsItem> lineItems");
     assertThat(content).contains("private ShippingAddress shippingAddress");
     assertThat(content).contains("private Set<String> promotionCodes");
     assertThat(content).contains("private Set<Double> discountTiers");
 
-    // Inner classes generated
-    assertThat(content).contains("public static class LineItemsItem");
-    assertThat(content).contains("public static class ShippingAddress");
+    // Map/list-of-map types are now standalone model files, not inner classes
+    assertThat(Files.exists(out.resolve("com/example/model/model/LineItemsItem.java"))).isTrue();
+    assertThat(Files.exists(out.resolve("com/example/model/model/ShippingAddress.java"))).isTrue();
   }
 
   // =========================================================================
@@ -2242,17 +2251,22 @@ public class JavaGeneratorTest {
 
     String entityContent = Files.readString(out.resolve("com/example/model/Order.java"));
 
-    // Outer inner class for shippingAddress
-    assertThat(entityContent).contains("public static class ShippingAddress");
-    assertThat(entityContent).contains("private String street");
-    assertThat(entityContent).contains("private String city");
+    // Entity references the model class type
+    assertThat(entityContent).contains("private ShippingAddress shippingAddress");
 
-    // Nested inner class for coordinates within ShippingAddress
-    assertThat(entityContent).contains("public static class Coordinates");
-    assertThat(entityContent).contains("private Double lat");
-    assertThat(entityContent).contains("private Double lng");
+    // ShippingAddress is now a standalone model class
+    String shippingContent = Files.readString(out.resolve("com/example/model/model/ShippingAddress.java"));
+    assertThat(shippingContent).contains("public class ShippingAddress");
+    assertThat(shippingContent).contains("private String street");
+    assertThat(shippingContent).contains("private String city");
 
-    // The coordinates field should reference the inner Coordinates type
-    assertThat(entityContent).contains("private Coordinates coordinates");
+    // Deeply-nested coordinates map gets its own file with a qualified name to avoid collisions
+    String coordsContent = Files.readString(out.resolve("com/example/model/model/ShippingAddressCoordinates.java"));
+    assertThat(coordsContent).contains("public class ShippingAddressCoordinates");
+    assertThat(coordsContent).contains("private Double lat");
+    assertThat(coordsContent).contains("private Double lng");
+
+    // ShippingAddress references the qualified coordinates type
+    assertThat(shippingContent).contains("private ShippingAddressCoordinates coordinates");
   }
 }

@@ -69,11 +69,22 @@ public class BprintSchema {
   /**
    * Field definition for nested map structures.
    * Supports recursive nesting: nested fields can themselves be maps or lists.
+   * Carries the same optional metadata as Field so that inner-class generation
+   * can emit Javadoc, @Builder.Default, and correct Java identifiers.
    */
   @JsonIgnoreProperties(ignoreUnknown = true)
   public static class NestedField {
     public String name;
+    public String nameOverride;
     public String type;
+    public boolean required;
+    public String description;
+    @JsonAlias({"default", "defaultValue"})
+    public Object defaultValue;
+    @JsonAlias({"enum", "enumValues"})
+    public List<String> enumValues;
+    public Constraints constraints;
+    public FieldAnnotations annotations;
     /** Element type definition (when type is 'list') */
     public ListItems items;
     /** Nested field definitions (when type is 'map') */

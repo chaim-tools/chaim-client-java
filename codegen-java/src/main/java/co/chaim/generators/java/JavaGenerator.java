@@ -281,7 +281,17 @@ public class JavaGenerator {
         String skCodeName = hasSortKey ? resolveKeyCodeName(schema, skFieldName) : null;
 
         ClassName entityClass = ClassName.get(pkg, entityName);
-        List<TypeSpec> innerClasses = new ArrayList<>();
+
+        // Generate standalone enum files for top-level string fields that carry enum values.
+        // Named {EntityName}{CapCodeName} (e.g. OrderStatus, OrderCurrency) so they are
+        // clearly scoped to the entity and live in the same package.
+        for (BprintSchema.Field field : schema.fields) {
+            if ("string".equals(field.type) && hasEnumValues(field)) {
+                String codeName = resolveCodeName(field);
+                String enumName = entityName + cap(codeName);
+                generateEnumFile(enumName, field.enumValues, field.description, pkg, outDir);
+            }
+        }
 
         TypeSpec.Builder tb = TypeSpec.classBuilder(entityName)
             .addModifiers(Modifier.PUBLIC)
@@ -291,13 +301,20 @@ public class JavaGenerator {
             .addAnnotation(LOMBOK_ALL_ARGS_CONSTRUCTOR)
             .addAnnotation(DYNAMO_DB_BEAN);
 
-        // Resolve code names and types for all fields in one pass to avoid
-        // calling mapFieldType twice (which would duplicate inner classes).
+        // Resolve code names and types for all fields. Map/list-of-map fields write
+        // standalone model classes to {pkg}.model and return their ClassName references.
+        // String fields with enum values use the generated enum type instead of String.
         record ResolvedField(BprintSchema.Field field, String codeName, TypeName type) {}
         List<ResolvedField> resolvedFields = new ArrayList<>();
         for (BprintSchema.Field field : schema.fields) {
             String codeName = resolveCodeName(field);
-            TypeName type = mapFieldType(field, entityClass, innerClasses);
+            TypeName type;
+            if ("string".equals(field.type) && hasEnumValues(field)) {
+                String enumName = entityName + cap(codeName);
+                type = ClassName.get(pkg, enumName);
+            } else {
+                type = mapFieldType(field, pkg, outDir);
+            }
             resolvedFields.add(new ResolvedField(field, codeName, type));
         }
 
@@ -310,10 +327,15 @@ public class JavaGenerator {
                 fieldBuilder.addJavadoc("$L\n", rf.field.description);
             }
 
-            // Add @Builder.Default with initializer for fields with default values
+            // Add @Builder.Default with initializer for fields with default values.
+            // Enum fields emit EnumType.CONSTANT_NAME; scalars use the standard formatter.
             if (rf.field.defaultValue != null) {
                 fieldBuilder.addAnnotation(LOMBOK_BUILDER_DEFAULT);
-                fieldBuilder.initializer(formatDefaultInitializer(rf.field.type, rf.field.defaultValue));
+                if ("string".equals(rf.field.type) && hasEnumValues(rf.field)) {
+                    fieldBuilder.initializer("$T.$L", rf.type, rf.field.defaultValue.toString());
+                } else {
+                    fieldBuilder.initializer(formatDefaultInitializer(rf.field.type, rf.field.defaultValue));
+                }
             }
 
             tb.addField(fieldBuilder.build());
@@ -373,11 +395,6 @@ public class JavaGenerator {
                     .addStatement("return $L", rf.codeName)
                     .build());
             }
-        }
-
-        // Add inner classes for collection types (list-of-map, standalone map)
-        for (TypeSpec inner : innerClasses) {
-            tb.addType(inner);
         }
 
         JavaFile.builder(pkg, tb.build())
@@ -595,7 +612,7 @@ public class JavaGenerator {
         if (tableMetadata.globalSecondaryIndexes() != null) {
             for (TableMetadata.GSIMetadata gsi : tableMetadata.globalSecondaryIndexes()) {
                 addIndexQueryMethods(tb, gsi.indexName(), gsi.partitionKey(), gsi.sortKey(),
-                    entityClass, listOfEntity);
+                    entityClass, listOfEntity, schema);
             }
         }
 
@@ -603,7 +620,7 @@ public class JavaGenerator {
         if (tableMetadata.localSecondaryIndexes() != null) {
             for (TableMetadata.LSIMetadata lsi : tableMetadata.localSecondaryIndexes()) {
                 addIndexQueryMethods(tb, lsi.indexName(), pkFieldName, lsi.sortKey(),
-                    entityClass, listOfEntity);
+                    entityClass, listOfEntity, schema);
             }
         }
 
@@ -616,22 +633,29 @@ public class JavaGenerator {
     /**
      * Add queryBy{IndexName} methods for a GSI or LSI.
      * Generates a PK-only query method, plus an overloaded PK+SK method if the index has a sort key.
+     * Uses the field's actual Java type for each key parameter (String, Double, or Instant)
+     * so the generated API is type-safe. Timestamp parameters are converted to their ISO-8601
+     * string representation before being passed to Key.Builder (which accepts String values).
      */
     private void addIndexQueryMethods(TypeSpec.Builder tb, String indexName, String partitionKey,
-            String sortKey, ClassName entityClass, ParameterizedTypeName listOfEntity) {
+            String sortKey, ClassName entityClass, ParameterizedTypeName listOfEntity,
+            BprintSchema schema) {
         String methodName = "queryBy" + cap(toCamelCase(indexName));
         String pkParamName = toCamelCase(partitionKey);
         ParameterizedTypeName indexType = ParameterizedTypeName.get(DYNAMO_DB_INDEX, entityClass);
+
+        TypeName pkParamType = resolveKeyParamType(partitionKey, schema);
+        String pkKeyExpr = toKeyExpression(pkParamName, partitionKey, schema);
 
         // PK-only query
         tb.addMethod(MethodSpec.methodBuilder(methodName)
             .addModifiers(Modifier.PUBLIC)
             .addJavadoc("Query $L index by partition key.\n", indexName)
-            .addParameter(String.class, pkParamName)
+            .addParameter(pkParamType, pkParamName)
             .returns(listOfEntity)
             .addStatement("$T index = table.index($S)", indexType, indexName)
             .addStatement("$T condition = $T.keyEqualTo($T.builder().partitionValue($L).build())",
-                QUERY_CONDITIONAL, QUERY_CONDITIONAL, KEY, pkParamName)
+                QUERY_CONDITIONAL, QUERY_CONDITIONAL, KEY, pkKeyExpr)
             .addStatement("$T<$T> results = new $T<>()",
                 ClassName.get("java.util", "List"), entityClass, ClassName.get("java.util", "ArrayList"))
             .addStatement("index.query(condition).forEach(page -> results.addAll(page.items()))")
@@ -641,21 +665,56 @@ public class JavaGenerator {
         // PK+SK query (if sort key exists)
         if (sortKey != null && !sortKey.isEmpty()) {
             String skParamName = toCamelCase(sortKey);
+            TypeName skParamType = resolveKeyParamType(sortKey, schema);
+            String skKeyExpr = toKeyExpression(skParamName, sortKey, schema);
             tb.addMethod(MethodSpec.methodBuilder(methodName)
                 .addModifiers(Modifier.PUBLIC)
                 .addJavadoc("Query $L index by partition key and sort key.\n", indexName)
-                .addParameter(String.class, pkParamName)
-                .addParameter(String.class, skParamName)
+                .addParameter(pkParamType, pkParamName)
+                .addParameter(skParamType, skParamName)
                 .returns(listOfEntity)
                 .addStatement("$T index = table.index($S)", indexType, indexName)
                 .addStatement("$T condition = $T.keyEqualTo($T.builder().partitionValue($L).sortValue($L).build())",
-                    QUERY_CONDITIONAL, QUERY_CONDITIONAL, KEY, pkParamName, skParamName)
+                    QUERY_CONDITIONAL, QUERY_CONDITIONAL, KEY, pkKeyExpr, skKeyExpr)
                 .addStatement("$T<$T> results = new $T<>()",
                     ClassName.get("java.util", "List"), entityClass, ClassName.get("java.util", "ArrayList"))
                 .addStatement("index.query(condition).forEach(page -> results.addAll(page.items()))")
                 .addStatement("return results")
                 .build());
         }
+    }
+
+    /**
+     * Resolve the Java parameter type for a DynamoDB key field by looking it up in the schema.
+     * Returns String for string/unknown fields, Double for number fields, Instant for timestamp fields.
+     * DynamoDB key attributes are almost always strings, but timestamps and numbers are valid too.
+     */
+    private static TypeName resolveKeyParamType(String fieldName, BprintSchema schema) {
+        if (schema != null && schema.fields != null) {
+            for (BprintSchema.Field f : schema.fields) {
+                if (fieldName.equals(f.name)) {
+                    return mapScalarType(f.type);
+                }
+            }
+        }
+        return ClassName.get(String.class);
+    }
+
+    /**
+     * Return the Java expression to pass a key parameter to Key.Builder.partitionValue() /
+     * sortValue(). String and number fields pass the variable directly. Timestamp (Instant)
+     * fields must be converted to ISO-8601 string first because Key.Builder only accepts
+     * String or Number, not Instant.
+     */
+    private static String toKeyExpression(String paramName, String fieldName, BprintSchema schema) {
+        if (schema != null && schema.fields != null) {
+            for (BprintSchema.Field f : schema.fields) {
+                if (fieldName.equals(f.name) && "timestamp".equals(f.type)) {
+                    return paramName + ".toString()";
+                }
+            }
+        }
+        return paramName;
     }
 
     // =========================================================================
@@ -820,9 +879,25 @@ public class JavaGenerator {
             .initializer("$S", tableMetadata.tableName())
             .build());
 
-        tb.addField(FieldSpec.builder(String.class, "TABLE_ARN", Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
-            .initializer("$S", tableMetadata.tableArn())
-            .build());
+        // TABLE_ARN is an unresolved CDK token during local synth (before cdk deploy).
+        // Emit the raw string as a compile-time placeholder and read the real ARN from the
+        // CHAIM_TABLE_ARN environment variable at runtime if it is set.
+        String rawArn = tableMetadata.tableArn() != null ? tableMetadata.tableArn() : "";
+        boolean arnIsToken = rawArn.startsWith("${Token[") || rawArn.startsWith("arn:aws") == false && rawArn.contains("Token");
+        if (arnIsToken) {
+            tb.addField(FieldSpec.builder(String.class, "TABLE_ARN", Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
+                .addJavadoc("Table ARN. Resolved from CHAIM_TABLE_ARN env var at runtime; "
+                    + "compile-time value is a CDK placeholder and will not be valid until after cdk deploy.\n")
+                .initializer("$T.getenv($S) != null ? $T.getenv($S) : $S",
+                    System.class, "CHAIM_TABLE_ARN",
+                    System.class, "CHAIM_TABLE_ARN",
+                    rawArn)
+                .build());
+        } else {
+            tb.addField(FieldSpec.builder(String.class, "TABLE_ARN", Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
+                .initializer("$S", rawArn)
+                .build());
+        }
 
         tb.addField(FieldSpec.builder(String.class, "REGION", Modifier.PUBLIC, Modifier.STATIC, Modifier.FINAL)
             .initializer("$S", tableMetadata.region())
@@ -1019,8 +1094,10 @@ public class JavaGenerator {
                         .endControlFlow();
                 }
 
-                // Constraint checks (null-safe) - not applicable to collection types
-                if (hasConstraints) {
+                // Constraint checks (null-safe) - not applicable to collection types.
+                // String constraints (length, pattern) are also skipped for enum fields —
+                // the enum type makes them redundant.
+                if (hasConstraints && !hasEnumValues(field)) {
                     BprintSchema.Constraints c = field.constraints;
                     if ("string".equals(field.type)) {
                         addStringConstraintChecks(validateMethod, getterName, originalName, c, fieldErrorClass);
@@ -1029,10 +1106,9 @@ public class JavaGenerator {
                     }
                 }
 
-                // Enum validation (null-safe) - not applicable to collection types
-                if (hasEnum) {
-                    addEnumValidationCheck(validateMethod, getterName, originalName, field.enumValues, fieldErrorClass);
-                }
+                // Enum fields use a Java enum type — the type system and DynamoDB Enhanced
+                // Client enforce valid values at compile/serialization time. String-set
+                // validation is therefore no longer needed here.
             }
 
             validateMethod.beginControlFlow("if (!errors.isEmpty())")
@@ -1179,18 +1255,18 @@ public class JavaGenerator {
 
     /**
      * Map a field to its Java type, handling both scalar and collection types.
-     * For list-of-map and standalone map, generates inner @DynamoDbBean classes
-     * and adds them to the provided list.
-     * 
-     * @param field The bprint field
-     * @param entityClass The parent entity ClassName (for inner class naming)
-     * @param innerClasses Collector for generated inner TypeSpecs
+     * For list-of-map and standalone map, writes standalone {@code @DynamoDbBean}
+     * classes to the {@code {pkg}.model} sub-package.
+     *
+     * @param field  The bprint field
+     * @param pkg    Root entity package (model classes go in {@code pkg.model})
+     * @param outDir Output root for JavaPoet
      * @return The Java TypeName for this field
      */
-    private TypeName mapFieldType(BprintSchema.Field field, ClassName entityClass, List<TypeSpec> innerClasses) {
+    private TypeName mapFieldType(BprintSchema.Field field, String pkg, Path outDir) throws IOException {
         return switch (field.type) {
-            case "list" -> mapListType(field, entityClass, innerClasses);
-            case "map" -> mapMapType(field, entityClass, innerClasses);
+            case "list" -> mapListType(field, pkg, outDir);
+            case "map" -> mapMapType(field, pkg, outDir);
             case "stringSet" -> ParameterizedTypeName.get(
                 ClassName.get("java.util", "Set"), ClassName.get(String.class));
             case "numberSet" -> ParameterizedTypeName.get(
@@ -1201,10 +1277,15 @@ public class JavaGenerator {
 
     /**
      * Map a list field to its Java type.
-     * For list-of-scalars: List<String>, List<Double>, etc.
-     * For list-of-map: generates an inner class and returns List<InnerClass>.
+     * For list-of-scalars: {@code List<String>}, {@code List<Double>}, etc.
+     * For list-of-map: writes a standalone model class and returns {@code List<ModelClass>}.
+     *
+     * @param field  The bprint field
+     * @param pkg    Root entity package
+     * @param outDir Output root for JavaPoet
+     * @return The Java TypeName for this field
      */
-    private TypeName mapListType(BprintSchema.Field field, ClassName entityClass, List<TypeSpec> innerClasses) {
+    private TypeName mapListType(BprintSchema.Field field, String pkg, Path outDir) throws IOException {
         if (field.items == null) {
             return ParameterizedTypeName.get(
                 ClassName.get("java.util", "List"), ClassName.get(Object.class));
@@ -1213,10 +1294,8 @@ public class JavaGenerator {
         if ("map".equals(field.items.type) && field.items.fields != null) {
             String codeName = resolveCodeName(field);
             String innerClassName = cap(codeName) + "Item";
-            TypeSpec innerClass = buildNestedBeanClass(innerClassName, field.items.fields);
-            innerClasses.add(innerClass);
-            ClassName innerType = entityClass.nestedClass(innerClassName);
-            return ParameterizedTypeName.get(ClassName.get("java.util", "List"), innerType);
+            ClassName innerRef = writeModelClass(innerClassName, field.items.fields, pkg, outDir);
+            return ParameterizedTypeName.get(ClassName.get("java.util", "List"), innerRef);
         }
 
         ClassName elementType = mapScalarType(field.items.type);
@@ -1225,61 +1304,155 @@ public class JavaGenerator {
 
     /**
      * Map a standalone map field to its Java type.
-     * Generates an inner @DynamoDbBean class for the map structure.
+     * Writes a standalone {@code @DynamoDbBean} model class and returns its ClassName.
+     *
+     * @param field  The bprint field
+     * @param pkg    Root entity package
+     * @param outDir Output root for JavaPoet
+     * @return The Java TypeName for this field
      */
-    private TypeName mapMapType(BprintSchema.Field field, ClassName entityClass, List<TypeSpec> innerClasses) {
+    private TypeName mapMapType(BprintSchema.Field field, String pkg, Path outDir) throws IOException {
         if (field.fields == null || field.fields.isEmpty()) {
             return ClassName.get(Object.class);
         }
 
         String codeName = resolveCodeName(field);
         String innerClassName = cap(codeName);
-        TypeSpec innerClass = buildNestedBeanClass(innerClassName, field.fields);
-        innerClasses.add(innerClass);
-        return entityClass.nestedClass(innerClassName);
+        return writeModelClass(innerClassName, field.fields, pkg, outDir);
     }
 
     /**
-     * Build an inner static @DynamoDbBean class for nested map structures.
-     * Uses Lombok @Data and @NoArgsConstructor for getters/setters/constructors.
-     * Supports recursive nesting: nested map/list fields generate further inner classes.
+     * Write a standalone {@code @DynamoDbBean} class to the {@code {pkg}.model} sub-package
+     * and return its fully-qualified {@link ClassName}.
+     *
+     * <p>Nested map fields are written as their own files using a parent-prefixed class name to
+     * avoid collisions (e.g. {@code ShippingAddress.coordinates} → {@code ShippingAddressCoordinates}).
+     * Nested enum fields (string + enumValues) remain as inner enums within their containing class.
+     *
+     * @param className    Simple class name; outer class name is prepended for deep nesting
+     * @param nestedFields Fields to generate
+     * @param pkg          Root entity package; the model sub-package is derived by appending {@code .model}
+     * @param outDir       Output root for JavaPoet
+     * @return The fully-qualified {@link ClassName} of the written class
      */
-    private TypeSpec buildNestedBeanClass(String className, List<BprintSchema.NestedField> nestedFields) {
+    private ClassName writeModelClass(String className, List<BprintSchema.NestedField> nestedFields,
+            String pkg, Path outDir) throws IOException {
+        String modelPkg = pkg + ".model";
+        ClassName classRef = ClassName.get(modelPkg, className);
+
         TypeSpec.Builder tb = TypeSpec.classBuilder(className)
-            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+            .addModifiers(Modifier.PUBLIC)
             .addAnnotation(LOMBOK_DATA)
+            .addAnnotation(LOMBOK_BUILDER)
             .addAnnotation(LOMBOK_NO_ARGS_CONSTRUCTOR)
             .addAnnotation(LOMBOK_ALL_ARGS_CONSTRUCTOR)
             .addAnnotation(DYNAMO_DB_BEAN);
 
         for (BprintSchema.NestedField nf : nestedFields) {
+            // Resolve Java identifier — mirrors resolveCodeName() for top-level fields
+            String codeName;
+            if (nf.nameOverride != null && !nf.nameOverride.isEmpty()) {
+                codeName = nf.nameOverride;
+            } else if (VALID_JAVA_IDENTIFIER.matcher(nf.name).matches()) {
+                codeName = nf.name;
+            } else {
+                codeName = toJavaCamelCase(nf.name);
+            }
+
             TypeName fieldType;
 
             if ("map".equals(nf.type) && nf.fields != null && !nf.fields.isEmpty()) {
-                String innerClassName = cap(nf.name);
-                TypeSpec innerClass = buildNestedBeanClass(innerClassName, nf.fields);
-                tb.addType(innerClass);
-                fieldType = ClassName.bestGuess(innerClassName);
+                // Nested map → separate file in the model package, name-qualified to avoid collisions
+                String nestedClassName = className + cap(codeName);
+                fieldType = writeModelClass(nestedClassName, nf.fields, pkg, outDir);
             } else if ("list".equals(nf.type) && nf.items != null) {
                 if ("map".equals(nf.items.type) && nf.items.fields != null && !nf.items.fields.isEmpty()) {
-                    String innerClassName = cap(nf.name) + "Item";
-                    TypeSpec innerClass = buildNestedBeanClass(innerClassName, nf.items.fields);
-                    tb.addType(innerClass);
-                    fieldType = ParameterizedTypeName.get(
-                        ClassName.get("java.util", "List"), ClassName.bestGuess(innerClassName));
+                    String nestedClassName = className + cap(codeName) + "Item";
+                    ClassName nestedRef = writeModelClass(nestedClassName, nf.items.fields, pkg, outDir);
+                    fieldType = ParameterizedTypeName.get(ClassName.get("java.util", "List"), nestedRef);
                 } else {
-                    ClassName elementType = nf.items != null ? mapScalarType(nf.items.type) : ClassName.get(Object.class);
-                    fieldType = ParameterizedTypeName.get(
-                        ClassName.get("java.util", "List"), elementType);
+                    ClassName elementType = mapScalarType(nf.items.type);
+                    fieldType = ParameterizedTypeName.get(ClassName.get("java.util", "List"), elementType);
                 }
+            } else if ("string".equals(nf.type) && nf.enumValues != null && !nf.enumValues.isEmpty()) {
+                // Enum stays as a nested type in the containing class file
+                String innerEnumName = cap(codeName);
+                TypeSpec.Builder enumBuilder = TypeSpec.enumBuilder(innerEnumName)
+                    .addModifiers(Modifier.PUBLIC);
+                if (nf.description != null && !nf.description.isEmpty()) {
+                    enumBuilder.addJavadoc("$L\n", nf.description);
+                }
+                for (String v : nf.enumValues) {
+                    enumBuilder.addEnumConstant(v);
+                }
+                tb.addType(enumBuilder.build());
+                fieldType = classRef.nestedClass(innerEnumName);
             } else {
                 fieldType = mapScalarType(nf.type);
             }
 
-            tb.addField(FieldSpec.builder(fieldType, nf.name, Modifier.PRIVATE).build());
+            FieldSpec.Builder fieldBuilder = FieldSpec.builder(fieldType, codeName, Modifier.PRIVATE);
+
+            if (nf.description != null && !nf.description.isEmpty()) {
+                fieldBuilder.addJavadoc("$L\n", nf.description);
+            }
+
+            if (nf.defaultValue != null) {
+                fieldBuilder.addAnnotation(LOMBOK_BUILDER_DEFAULT);
+                if ("string".equals(nf.type) && nf.enumValues != null && !nf.enumValues.isEmpty()) {
+                    fieldBuilder.initializer("$T.$L", classRef.nestedClass(cap(codeName)), nf.defaultValue.toString());
+                } else {
+                    fieldBuilder.initializer(formatDefaultInitializer(nf.type, nf.defaultValue));
+                }
+            }
+
+            tb.addField(fieldBuilder.build());
+
+            // Emit explicit getter with @DynamoDbAttribute when the Java code name
+            // differs from the DynamoDB attribute name so the Enhanced Client maps
+            // the attribute correctly.
+            if (!codeName.equals(nf.name)) {
+                tb.addMethod(MethodSpec.methodBuilder("get" + cap(codeName))
+                    .addModifiers(Modifier.PUBLIC)
+                    .addAnnotation(dynamoDbAttributeAnnotation(nf.name))
+                    .returns(fieldType)
+                    .addStatement("return $L", codeName)
+                    .build());
+            }
         }
 
-        return tb.build();
+        JavaFile.builder(modelPkg, tb.build())
+            .skipJavaLangImports(true)
+            .build()
+            .writeTo(outDir);
+
+        return classRef;
+    }
+
+    /**
+     * Generate a top-level Java enum file for a string field that carries a fixed set of
+     * allowed values. The enum is placed in the same package as the entity class.
+     *
+     * @param enumName   Simple class name (e.g. "OrderStatus")
+     * @param values     Enum constant names from the .bprint enumValues array
+     * @param description Optional Javadoc string; may be null
+     * @param pkg        Java package
+     * @param outDir     Output root directory
+     */
+    private void generateEnumFile(String enumName, List<String> values, String description,
+            String pkg, Path outDir) throws IOException {
+        TypeSpec.Builder eb = TypeSpec.enumBuilder(enumName)
+            .addModifiers(Modifier.PUBLIC);
+        if (description != null && !description.isEmpty()) {
+            eb.addJavadoc("$L\n", description);
+        }
+        for (String v : values) {
+            eb.addEnumConstant(v);
+        }
+        JavaFile.builder(pkg, eb.build())
+            .skipJavaLangImports(true)
+            .build()
+            .writeTo(outDir);
     }
 
     /**
