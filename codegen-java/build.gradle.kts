@@ -5,10 +5,6 @@ dependencies {
   implementation("software.amazon.awssdk:dynamodb-enhanced:2.21.29")
   implementation("com.fasterxml.jackson.core:jackson-databind:2.15.2")
   
-  // Lombok for generated code annotations
-  compileOnly("org.projectlombok:lombok:1.18.30")
-  annotationProcessor("org.projectlombok:lombok:1.18.30")
-  
   testImplementation("org.junit.jupiter:junit-jupiter:5.10.3")
   testImplementation("org.assertj:assertj-core:3.26.3")
   testRuntimeOnly("org.junit.platform:junit-platform-launcher:1.10.3")

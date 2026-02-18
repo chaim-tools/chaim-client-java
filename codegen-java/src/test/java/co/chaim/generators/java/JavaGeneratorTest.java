@@ -125,11 +125,11 @@ public class JavaGeneratorTest {
 
     String content = Files.readString(file);
     
-    // Check Lombok annotations
-    assertThat(content).contains("@Data");
-    assertThat(content).contains("@Builder");
-    assertThat(content).contains("@NoArgsConstructor");
-    assertThat(content).contains("@AllArgsConstructor");
+    // Check plain-Java boilerplate (no Lombok)
+    assertThat(content).contains("public User()");
+    assertThat(content).contains("public static class Builder");
+    assertThat(content).contains("public static Builder builder()");
+    assertThat(content).contains("public User build()");
     
     // Check DynamoDB annotation
     assertThat(content).contains("@DynamoDbBean");
@@ -1306,13 +1306,12 @@ public class JavaGeneratorTest {
 
     String content = Files.readString(out.resolve("com/example/model/Settings.java"));
 
-    // Field with default should have @Builder.Default and initializer
-    assertThat(content).contains("@Builder.Default");
+    // Field with default has an inline initializer (no @Builder.Default)
     assertThat(content).contains("private String currency = \"USD\"");
+    assertThat(content).doesNotContain("@Builder.Default");
 
-    // Field without default should NOT have @Builder.Default
+    // Field without default has no initializer
     assertThat(content).contains("private String locale;");
-    // settingsId should also not have @Builder.Default
     assertThat(content).contains("private String settingsId;");
   }
 
@@ -1348,9 +1347,9 @@ public class JavaGeneratorTest {
 
     String content = Files.readString(out.resolve("com/example/model/Feature.java"));
 
-    assertThat(content).contains("@Builder.Default");
     assertThat(content).contains("private Boolean active = true");
     assertThat(content).contains("private Boolean deprecated = false");
+    assertThat(content).doesNotContain("@Builder.Default");
   }
 
   @Test
@@ -1385,9 +1384,9 @@ public class JavaGeneratorTest {
 
     String content = Files.readString(out.resolve("com/example/model/Pricing.java"));
 
-    assertThat(content).contains("@Builder.Default");
     assertThat(content).contains("private Double taxRate = 0.0");
     assertThat(content).contains("private Double discount = 10.5");
+    assertThat(content).doesNotContain("@Builder.Default");
   }
 
   @Test
@@ -1741,10 +1740,10 @@ public class JavaGeneratorTest {
     assertThat(modelContent).contains("private Double quantity");
     assertThat(modelContent).contains("private Double price");
 
-    // Model class should have DynamoDB and Lombok annotations
+    // Model class should have DynamoDB annotation and plain-Java boilerplate
     assertThat(modelContent).contains("@DynamoDbBean");
-    assertThat(modelContent).contains("@NoArgsConstructor");
-    assertThat(modelContent).contains("@AllArgsConstructor");
+    assertThat(modelContent).contains("public LineItemsItem()");
+    assertThat(modelContent).contains("public static class Builder");
   }
 
   @Test

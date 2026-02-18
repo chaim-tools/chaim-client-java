@@ -11,6 +11,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * Java code generator for DynamoDB Enhanced Client.
@@ -50,13 +51,18 @@ public class JavaGenerator {
     private static final ClassName DYNAMO_DB_ATTRIBUTE = ClassName.get(
         "software.amazon.awssdk.enhanced.dynamodb.mapper.annotations", "DynamoDbAttribute");
     
-    // Lombok annotation class names
-    private static final ClassName LOMBOK_DATA = ClassName.get("lombok", "Data");
-    private static final ClassName LOMBOK_BUILDER = ClassName.get("lombok", "Builder");
-    private static final ClassName LOMBOK_BUILDER_DEFAULT = ClassName.get("lombok", "Builder", "Default");
-    private static final ClassName LOMBOK_NO_ARGS_CONSTRUCTOR = ClassName.get("lombok", "NoArgsConstructor");
-    private static final ClassName LOMBOK_ALL_ARGS_CONSTRUCTOR = ClassName.get("lombok", "AllArgsConstructor");
-    
+    /**
+     * Per-field descriptor used when generating plain-Java boilerplate
+     * (constructors, setters, Builder, equals/hashCode/toString).
+     */
+    private record PlainField(
+        String codeName,
+        TypeName type,
+        Object defaultValue,    // null → no initializer
+        String bprintType,      // used by formatDefaultInitializer
+        boolean isEnumType      // true → emit EnumType.VALUE initializer
+    ) {}
+
     // AWS SDK class names
     private static final ClassName DYNAMO_DB_ENHANCED_CLIENT = ClassName.get(
         "software.amazon.awssdk.enhanced.dynamodb", "DynamoDbEnhancedClient");
@@ -295,10 +301,6 @@ public class JavaGenerator {
 
         TypeSpec.Builder tb = TypeSpec.classBuilder(entityName)
             .addModifiers(Modifier.PUBLIC)
-            .addAnnotation(LOMBOK_DATA)
-            .addAnnotation(LOMBOK_BUILDER)
-            .addAnnotation(LOMBOK_NO_ARGS_CONSTRUCTOR)
-            .addAnnotation(LOMBOK_ALL_ARGS_CONSTRUCTOR)
             .addAnnotation(DYNAMO_DB_BEAN);
 
         // Resolve code names and types for all fields. Map/list-of-map fields write
@@ -318,20 +320,19 @@ public class JavaGenerator {
             resolvedFields.add(new ResolvedField(field, codeName, type));
         }
 
-        // Add all fields from schema using resolved code names
+        // Add all fields. Default values are emitted as inline field initializers —
+        // no @Builder.Default needed since we generate the Builder explicitly.
+        List<PlainField> plainFields = new ArrayList<>();
         for (ResolvedField rf : resolvedFields) {
             FieldSpec.Builder fieldBuilder = FieldSpec.builder(rf.type, rf.codeName, Modifier.PRIVATE);
 
-            // Add field description as Javadoc
             if (rf.field.description != null && !rf.field.description.isEmpty()) {
                 fieldBuilder.addJavadoc("$L\n", rf.field.description);
             }
 
-            // Add @Builder.Default with initializer for fields with default values.
-            // Enum fields emit EnumType.CONSTANT_NAME; scalars use the standard formatter.
+            boolean isEnumType = "string".equals(rf.field.type) && hasEnumValues(rf.field);
             if (rf.field.defaultValue != null) {
-                fieldBuilder.addAnnotation(LOMBOK_BUILDER_DEFAULT);
-                if ("string".equals(rf.field.type) && hasEnumValues(rf.field)) {
+                if (isEnumType) {
                     fieldBuilder.initializer("$T.$L", rf.type, rf.field.defaultValue.toString());
                 } else {
                     fieldBuilder.initializer(formatDefaultInitializer(rf.field.type, rf.field.defaultValue));
@@ -339,9 +340,14 @@ public class JavaGenerator {
             }
 
             tb.addField(fieldBuilder.build());
+            plainFields.add(new PlainField(rf.codeName, rf.type, rf.field.defaultValue, rf.field.type, isEnumType));
         }
 
-        // Generate explicit getter for partition key with @DynamoDbPartitionKey
+        // Constructors (no-arg required by DynamoDB Enhanced Client; all-args for the Builder)
+        addConstructors(tb, entityName, plainFields);
+
+        // Getters — PK and SK carry DynamoDB key annotations; all others are plain getters
+        // with @DynamoDbAttribute only when the code name differs from the DDB attribute name.
         String pkGetterName = "get" + cap(pkCodeName);
         TypeName pkType = resolvedFields.stream()
             .filter(rf -> rf.field.name.equals(pkFieldName))
@@ -352,14 +358,11 @@ public class JavaGenerator {
             .addAnnotation(DYNAMO_DB_PARTITION_KEY)
             .returns(pkType)
             .addStatement("return $L", pkCodeName);
-
-        // Add @DynamoDbAttribute on PK getter if code name differs
         if (!pkCodeName.equals(pkFieldName)) {
             pkGetter.addAnnotation(dynamoDbAttributeAnnotation(pkFieldName));
         }
         tb.addMethod(pkGetter.build());
 
-        // Generate explicit getter for sort key with @DynamoDbSortKey (if defined)
         if (hasSortKey) {
             String skGetterName = "get" + cap(skCodeName);
             TypeName skType = resolvedFields.stream()
@@ -371,31 +374,32 @@ public class JavaGenerator {
                 .addAnnotation(DYNAMO_DB_SORT_KEY)
                 .returns(skType)
                 .addStatement("return $L", skCodeName);
-
             if (!skCodeName.equals(skFieldName)) {
                 skGetter.addAnnotation(dynamoDbAttributeAnnotation(skFieldName));
             }
             tb.addMethod(skGetter.build());
         }
 
-        // Generate explicit getters with @DynamoDbAttribute for non-key fields
-        // whose code name differs from the DynamoDB attribute name.
-        // @DynamoDbAttribute has @Target(ElementType.METHOD) — it must be on a
-        // getter method, not a field. Lombok @Data skips generating a getter
-        // when an explicit one already exists, so there is no conflict.
         for (ResolvedField rf : resolvedFields) {
             boolean isPk = rf.field.name.equals(pkFieldName);
             boolean isSk = hasSortKey && rf.field.name.equals(skFieldName);
-            if (!isPk && !isSk && needsAttributeAnnotation(rf.field, rf.codeName)) {
-                String getterName = "get" + cap(rf.codeName);
-                tb.addMethod(MethodSpec.methodBuilder(getterName)
-                    .addModifiers(Modifier.PUBLIC)
-                    .addAnnotation(dynamoDbAttributeAnnotation(rf.field.name))
-                    .returns(rf.type)
-                    .addStatement("return $L", rf.codeName)
-                    .build());
+            if (isPk || isSk) {
+                continue;
             }
+            MethodSpec.Builder getter = MethodSpec.methodBuilder("get" + cap(rf.codeName))
+                .addModifiers(Modifier.PUBLIC)
+                .returns(rf.type)
+                .addStatement("return $L", rf.codeName);
+            if (needsAttributeAnnotation(rf.field, rf.codeName)) {
+                getter.addAnnotation(dynamoDbAttributeAnnotation(rf.field.name));
+            }
+            tb.addMethod(getter.build());
         }
+
+        // Setters (required for mutable DynamoDB beans), Builder, equals/hashCode/toString
+        addSetters(tb, plainFields);
+        addBuilderClass(tb, entityName, plainFields);
+        addEqualsHashCodeToString(tb, entityName, plainFields);
 
         JavaFile.builder(pkg, tb.build())
             .skipJavaLangImports(true)
@@ -1342,11 +1346,9 @@ public class JavaGenerator {
 
         TypeSpec.Builder tb = TypeSpec.classBuilder(className)
             .addModifiers(Modifier.PUBLIC)
-            .addAnnotation(LOMBOK_DATA)
-            .addAnnotation(LOMBOK_BUILDER)
-            .addAnnotation(LOMBOK_NO_ARGS_CONSTRUCTOR)
-            .addAnnotation(LOMBOK_ALL_ARGS_CONSTRUCTOR)
             .addAnnotation(DYNAMO_DB_BEAN);
+
+        List<PlainField> plainFields = new ArrayList<>();
 
         for (BprintSchema.NestedField nf : nestedFields) {
             // Resolve Java identifier — mirrors resolveCodeName() for top-level fields
@@ -1360,6 +1362,7 @@ public class JavaGenerator {
             }
 
             TypeName fieldType;
+            boolean isEnumType = false;
 
             if ("map".equals(nf.type) && nf.fields != null && !nf.fields.isEmpty()) {
                 // Nested map → separate file in the model package, name-qualified to avoid collisions
@@ -1387,6 +1390,7 @@ public class JavaGenerator {
                 }
                 tb.addType(enumBuilder.build());
                 fieldType = classRef.nestedClass(innerEnumName);
+                isEnumType = true;
             } else {
                 fieldType = mapScalarType(nf.type);
             }
@@ -1398,8 +1402,7 @@ public class JavaGenerator {
             }
 
             if (nf.defaultValue != null) {
-                fieldBuilder.addAnnotation(LOMBOK_BUILDER_DEFAULT);
-                if ("string".equals(nf.type) && nf.enumValues != null && !nf.enumValues.isEmpty()) {
+                if (isEnumType) {
                     fieldBuilder.initializer("$T.$L", classRef.nestedClass(cap(codeName)), nf.defaultValue.toString());
                 } else {
                     fieldBuilder.initializer(formatDefaultInitializer(nf.type, nf.defaultValue));
@@ -1407,19 +1410,30 @@ public class JavaGenerator {
             }
 
             tb.addField(fieldBuilder.build());
-
-            // Emit explicit getter with @DynamoDbAttribute when the Java code name
-            // differs from the DynamoDB attribute name so the Enhanced Client maps
-            // the attribute correctly.
-            if (!codeName.equals(nf.name)) {
-                tb.addMethod(MethodSpec.methodBuilder("get" + cap(codeName))
-                    .addModifiers(Modifier.PUBLIC)
-                    .addAnnotation(dynamoDbAttributeAnnotation(nf.name))
-                    .returns(fieldType)
-                    .addStatement("return $L", codeName)
-                    .build());
-            }
+            plainFields.add(new PlainField(codeName, fieldType, nf.defaultValue, nf.type, isEnumType));
         }
+
+        // Constructors
+        addConstructors(tb, className, plainFields);
+
+        // Getters — @DynamoDbAttribute on getters where code name differs from DDB attribute name
+        for (int i = 0; i < nestedFields.size(); i++) {
+            BprintSchema.NestedField nf = nestedFields.get(i);
+            PlainField pf = plainFields.get(i);
+            MethodSpec.Builder getter = MethodSpec.methodBuilder("get" + cap(pf.codeName))
+                .addModifiers(Modifier.PUBLIC)
+                .returns(pf.type)
+                .addStatement("return $L", pf.codeName);
+            if (!pf.codeName.equals(nf.name)) {
+                getter.addAnnotation(dynamoDbAttributeAnnotation(nf.name));
+            }
+            tb.addMethod(getter.build());
+        }
+
+        // Setters, Builder, equals/hashCode/toString
+        addSetters(tb, plainFields);
+        addBuilderClass(tb, className, plainFields);
+        addEqualsHashCodeToString(tb, className, plainFields);
 
         JavaFile.builder(modelPkg, tb.build())
             .skipJavaLangImports(true)
@@ -1427,6 +1441,171 @@ public class JavaGenerator {
             .writeTo(outDir);
 
         return classRef;
+    }
+
+    // =========================================================================
+    // Plain-Java Boilerplate Helpers
+    // =========================================================================
+
+    /**
+     * Emit a no-arg constructor and an all-args constructor (field order matches declaration).
+     */
+    private static void addConstructors(TypeSpec.Builder tb, String className, List<PlainField> fields) {
+        tb.addMethod(MethodSpec.constructorBuilder()
+            .addModifiers(Modifier.PUBLIC)
+            .addJavadoc("Default no-arg constructor (required by DynamoDB Enhanced Client).\n")
+            .build());
+
+        if (!fields.isEmpty()) {
+            MethodSpec.Builder allArgs = MethodSpec.constructorBuilder()
+                .addModifiers(Modifier.PUBLIC)
+                .addJavadoc("All-args constructor.\n");
+            for (PlainField f : fields) {
+                allArgs.addParameter(f.type, f.codeName);
+            }
+            for (PlainField f : fields) {
+                allArgs.addStatement("this.$L = $L", f.codeName, f.codeName);
+            }
+            tb.addMethod(allArgs.build());
+        }
+    }
+
+    /**
+     * Emit a public setter for every field (required for mutable DynamoDB beans).
+     */
+    private static void addSetters(TypeSpec.Builder tb, List<PlainField> fields) {
+        for (PlainField f : fields) {
+            tb.addMethod(MethodSpec.methodBuilder("set" + cap(f.codeName))
+                .addModifiers(Modifier.PUBLIC)
+                .addParameter(f.type, f.codeName)
+                .addStatement("this.$L = $L", f.codeName, f.codeName)
+                .build());
+        }
+    }
+
+    /**
+     * Emit a static {@code Builder} inner class and a {@code builder()} factory method.
+     * The builder mirrors the Lombok @Builder API so consumer call-sites are unchanged.
+     */
+    private static void addBuilderClass(TypeSpec.Builder tb, String className, List<PlainField> fields) {
+        ClassName builderRef = ClassName.bestGuess("Builder");
+        ClassName entityRef = ClassName.bestGuess(className);
+
+        tb.addMethod(MethodSpec.methodBuilder("builder")
+            .addModifiers(Modifier.PUBLIC, Modifier.STATIC)
+            .returns(builderRef)
+            .addStatement("return new Builder()")
+            .build());
+
+        TypeSpec.Builder builderTb = TypeSpec.classBuilder("Builder")
+            .addModifiers(Modifier.PUBLIC, Modifier.STATIC);
+
+        for (PlainField f : fields) {
+            FieldSpec.Builder fb = FieldSpec.builder(f.type, f.codeName, Modifier.PRIVATE);
+            if (f.defaultValue != null) {
+                if (f.isEnumType) {
+                    fb.initializer("$T.$L", f.type, f.defaultValue.toString());
+                } else {
+                    fb.initializer(formatDefaultInitializer(f.bprintType, f.defaultValue));
+                }
+            }
+            builderTb.addField(fb.build());
+        }
+
+        for (PlainField f : fields) {
+            builderTb.addMethod(MethodSpec.methodBuilder(f.codeName)
+                .addModifiers(Modifier.PUBLIC)
+                .addParameter(f.type, f.codeName)
+                .returns(builderRef)
+                .addStatement("this.$L = $L", f.codeName, f.codeName)
+                .addStatement("return this")
+                .build());
+        }
+
+        MethodSpec.Builder buildMethod = MethodSpec.methodBuilder("build")
+            .addModifiers(Modifier.PUBLIC)
+            .returns(entityRef);
+        if (fields.isEmpty()) {
+            buildMethod.addStatement("return new $T()", entityRef);
+        } else {
+            String argList = fields.stream().map(f -> f.codeName).collect(Collectors.joining(", "));
+            buildMethod.addStatement("return new $T($L)", entityRef, argList);
+        }
+        builderTb.addMethod(buildMethod.build());
+
+        tb.addType(builderTb.build());
+    }
+
+    /**
+     * Emit {@code equals}, {@code hashCode}, and {@code toString} using {@code java.util.Objects}.
+     */
+    private static void addEqualsHashCodeToString(TypeSpec.Builder tb, String className, List<PlainField> fields) {
+        ClassName objectsClass = ClassName.get("java.util", "Objects");
+        ClassName entityRef = ClassName.bestGuess(className);
+
+        // equals()
+        MethodSpec.Builder equalsMethod = MethodSpec.methodBuilder("equals")
+            .addAnnotation(Override.class)
+            .addModifiers(Modifier.PUBLIC)
+            .returns(boolean.class)
+            .addParameter(ClassName.get(Object.class), "o");
+        equalsMethod.addStatement("if (this == o) return true");
+        equalsMethod.addStatement("if (!(o instanceof $T)) return false", entityRef);
+        equalsMethod.addStatement("$T that = ($T) o", entityRef, entityRef);
+        if (fields.isEmpty()) {
+            equalsMethod.addStatement("return true");
+        } else {
+            StringBuilder condExpr = new StringBuilder("return ");
+            List<Object> condArgs = new ArrayList<>();
+            for (int i = 0; i < fields.size(); i++) {
+                if (i > 0) {
+                    condExpr.append("\n    && ");
+                }
+                condExpr.append("$T.equals($L, that.$L)");
+                condArgs.add(objectsClass);
+                condArgs.add(fields.get(i).codeName);
+                condArgs.add(fields.get(i).codeName);
+            }
+            equalsMethod.addStatement(condExpr.toString(), condArgs.toArray());
+        }
+        tb.addMethod(equalsMethod.build());
+
+        // hashCode()
+        MethodSpec.Builder hashCodeMethod = MethodSpec.methodBuilder("hashCode")
+            .addAnnotation(Override.class)
+            .addModifiers(Modifier.PUBLIC)
+            .returns(int.class);
+        if (fields.isEmpty()) {
+            hashCodeMethod.addStatement("return 0");
+        } else {
+            String hashArgs = fields.stream().map(f -> f.codeName).collect(Collectors.joining(", "));
+            hashCodeMethod.addStatement("return $T.hash($L)", objectsClass, hashArgs);
+        }
+        tb.addMethod(hashCodeMethod.build());
+
+        // toString()
+        MethodSpec.Builder toStringMethod = MethodSpec.methodBuilder("toString")
+            .addAnnotation(Override.class)
+            .addModifiers(Modifier.PUBLIC)
+            .returns(ClassName.get(String.class));
+        if (fields.isEmpty()) {
+            toStringMethod.addStatement("return $S", className + "{}");
+        } else {
+            StringBuilder tsExpr = new StringBuilder("return $S");
+            List<Object> tsArgs = new ArrayList<>();
+            tsArgs.add(className + "{" + fields.get(0).codeName + "=");
+            tsExpr.append(" + $L");
+            tsArgs.add(fields.get(0).codeName);
+            for (int i = 1; i < fields.size(); i++) {
+                tsExpr.append(" + $S + $L");
+                tsArgs.add(", " + fields.get(i).codeName + "=");
+                tsArgs.add(fields.get(i).codeName);
+            }
+            tsExpr.append(" + $S");
+            tsArgs.add("}");
+            toStringMethod.addStatement(tsExpr.toString(), tsArgs.toArray());
+        }
+        tb.addMethod(toStringMethod.build());
     }
 
     /**
